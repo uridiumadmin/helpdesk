@@ -1,38 +1,66 @@
-# Byte-compiled / optimized / DLL files
-__pycache__/
-
+# OS-specifično
 .DS_Store
-*.pyc
-*.egg-info
-*.swp
-*.log
-tags
-node_modules
-.vscode
+Thumbs.db
 
-# Distribution / packaging
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-pip-wheel-metadata/
-share/python-wheels/
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+*.so
 *.egg-info/
-.installed.cfg
 *.egg
 
-helpdesk/docs/current
-helpdesk/public/desk
-helpdesk/public/frontend
-helpdesk/public/node_modules
+# Bench
+*.swp
+*.log
+*.pid
+*.bench
+*.tar
+*.tar.gz
+*.zip
+*.db
+
+# Frappe/Bench
+sites/assets/
+sites/apps.txt
+sites/currentsite.txt
+sites/common_site_config.json
+sites/*/locks
+sites/*/db_bkp/
+sites/*/private/
+sites/*/public/backups/
+sites/*/public/files/
+sites/*/public/__pycache__/
+
+# Virtualenv
+venv/
+env/
+.Python
+
+# Node.js / Yarn
+node_modules/
+.yarn/cache/
+.yarn/install-state.gz
+.yarn/build-state.yml
+.yarn/unplugged/
+.yarn/virtual/
+.pnp.*
+.yarnrc.yml
+
+# Vue build
+dist/
+build/
+desk/dist/
+helpdesk/public/desk/
+helpdesk/public/frontend/
+helpdesk/public/node_modules/
 helpdesk/www/helpdesk/index.html
 desk/components.d.ts
+
+# Editor folders
+.vscode/
+.idea/
+tags
+
+# Custom docs
+helpdesk/docs/current
