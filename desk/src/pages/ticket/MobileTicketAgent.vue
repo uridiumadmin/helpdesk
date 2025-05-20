@@ -86,6 +86,12 @@
                 />
               </div>
 
+              <!-- Time Entries -->
+              <TicketTimeEntry
+                v-else-if="tab.name === 'time'"
+                :entries="ticket.data.time_entries"
+                @add="() => {}"
+              />
               <!-- Rest Activities -->
               <TicketAgentActivities
                 v-else
@@ -194,13 +200,16 @@ import {
   CommunicationArea,
 } from "@/components";
 import { TicketAgentActivities } from "@/components/ticket";
+import { TicketTimeEntry } from "@/components/ticket";
 import {
   ActivityIcon,
   CommentIcon,
   EmailIcon,
   IndicatorIcon,
   DetailsIcon,
+  
 } from "@/components/icons";
+import LucideClock from "~icons/lucide/clock";
 
 import { useTicketStatusStore } from "@/stores/ticketStatus";
 import { useUserStore } from "@/stores/user";
@@ -316,6 +325,11 @@ const tabs: TabObject[] = [
     label: "Comments",
     icon: CommentIcon,
   },
+  {
+    name: "time",
+    label: "Time Entry",
+    icon: LucideClock,
+  },
 ];
 
 const activities = computed(() => {
@@ -392,6 +406,9 @@ const activities = computed(() => {
 function filterActivities(eventType: TicketTab) {
   if (eventType === "activity") {
     return activities.value;
+  }
+  if (eventType === "time") {
+    return ticket.data.time_entries || [];
   }
   return activities.value.filter((activity) => activity.type === eventType);
 }

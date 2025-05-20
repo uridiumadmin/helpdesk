@@ -1,0 +1,30 @@
+{
+ "doctype": "DocType",
+ "name": "HD Time Entry",
+ "module": "Helpdesk",
+ "autoname": "hash",
+ "field_order": [
+  "reference_ticket",
+  "from_time",
+  "to_time",
+  "hours",
+  "description",
+  "billable",
+  "show_on_invoice"
+ ],
+ "fields": [
+  {"fieldname": "reference_ticket", "label": "Reference Ticket", "fieldtype": "Link", "options": "HD Ticket", "in_list_view": 1},
+  {"fieldname": "from_time", "label": "From Time", "fieldtype": "Datetime"},
+  {"fieldname": "to_time", "label": "To Time", "fieldtype": "Datetime"},
+  {"fieldname": "hours", "label": "Hours", "fieldtype": "Float"},
+  {"fieldname": "description", "label": "Description", "fieldtype": "Text"},
+  {"fieldname": "billable", "label": "Billable", "fieldtype": "Check", "default": "1"},
+  {"fieldname": "show_on_invoice", "label": "Show on Invoice", "fieldtype": "Check", "default": "1", "depends_on": "eval:doc.billable==0"}
+ ],
+ "permissions": [
+  {"role": "System Manager", "read": 1, "write": 1, "create": 1, "delete": 1, "email": 1, "export": 1, "print": 1, "report": 1, "share": 1},
+  {"role": "Agent", "read": 1, "write": 1, "create": 1, "delete": 1, "email": 1, "export": 1, "print": 1, "report": 1, "share": 1}
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC"
+}
