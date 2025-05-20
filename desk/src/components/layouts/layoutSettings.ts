@@ -3,6 +3,7 @@ import LucideCloudLightning from "~icons/lucide/cloud-lightning";
 import LucideContact2 from "~icons/lucide/contact-2";
 import LucideTicket from "~icons/lucide/ticket";
 import LucideUser from "~icons/lucide/user";
+import LucideClock from "~icons/lucide/clock";
 import { OrganizationsIcon } from "../icons";
 import LucideUsers from "~icons/lucide/users";
 import {
@@ -12,6 +13,7 @@ import {
   AGENT_PORTAL_TEAM_LIST,
   AGENT_PORTAL_TICKET_LIST,
   AGENT_PORTAL_KNOWLEDGE_BASE,
+  AGENT_PORTAL_TIME_ENTRY,
 } from "@/router";
 
 export const agentPortalSidebarOptions = [
@@ -39,6 +41,11 @@ export const agentPortalSidebarOptions = [
     label: "Canned responses",
     icon: LucideCloudLightning,
     to: "CannedResponses",
+  },
+  {
+    label: "Time Entries",
+    icon: LucideClock,
+    to: AGENT_PORTAL_TIME_ENTRY,
   },
   {
     label: "Customers",

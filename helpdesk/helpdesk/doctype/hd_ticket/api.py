@@ -12,6 +12,7 @@ from helpdesk.helpdesk.doctype.hd_ticket_template.api import get_one as get_temp
 from helpdesk.utils import agent_only, check_permissions, get_customer, is_agent
 
 
+
 @frappe.whitelist()
 # flake8: noqa
 def new(doc, attachments=[]):
@@ -75,6 +76,7 @@ def get_one(name, is_customer_portal=False):
         "tags": get_tags(name),
         "template": get_template(template),
         "views": get_views(name),
+        "time_entries": get_time_entries(name),
         "_form_script": get_form_script(
             "HD Ticket", is_customer_portal=is_customer_portal
         ),
@@ -230,6 +232,34 @@ def get_attachments(doctype, name):
         .select(QBFile.name, QBFile.file_url, QBFile.file_name)
         .where(QBFile.attached_to_doctype == doctype)
         .where(QBFile.attached_to_name == name)
+        .run(as_dict=True)
+    )
+
+
+@frappe.whitelist()
+def new_time_entry(doc: dict):
+    doc["doctype"] = "HD Time Entry"
+    return frappe.get_doc(doc).insert()
+
+
+@frappe.whitelist()
+def get_time_entries(ticket: str):
+    QB = frappe.qb.DocType("HD Time Entry")
+    return (
+        frappe.qb.from_(QB)
+        .select(
+            QB.name,
+            QB.from_time,
+            QB.to_time,
+            QB.hours,
+            QB.description,
+            QB.billable,
+            QB.show_on_invoice,
+            QB.owner,
+            QB.creation,
+        )
+        .where(QB.reference_ticket == ticket)
+        .orderby(QB.from_time, order=Order.asc)
         .run(as_dict=True)
     )
 

@@ -58,7 +58,13 @@
           <Tabs v-model="tabIndex" :tabs="tabs">
             <TabList />
             <TabPanel v-slot="{ tab }" class="h-full">
+              <TicketTimeEntry
+                v-if="tab.name === 'time'"
+                :entries="ticket.data.time_entries"
+                @add="() => {}"
+              />
               <TicketAgentActivities
+                v-else
                 ref="ticketAgentActivitiesRef"
                 :activities="filterActivities(tab.name)"
                 :title="tab.label"
@@ -162,7 +168,8 @@ import {
   EmailIcon,
   IndicatorIcon,
 } from "@/components/icons";
-import { TicketAgentActivities, TicketAgentSidebar } from "@/components/ticket";
+import LucideClock from "~icons/lucide/clock";
+import { TicketAgentActivities, TicketAgentSidebar, TicketTimeEntry } from "@/components/ticket";
 import { setupCustomizations } from "@/composables/formCustomisation";
 import { useView } from "@/composables/useView";
 import { socket } from "@/socket";
@@ -304,6 +311,11 @@ const tabs: TabObject[] = [
     label: "Comments",
     icon: CommentIcon,
   },
+  {
+    name: "time",
+    label: "Time Entry",
+    icon: LucideClock,
+  },
 ];
 
 const activities = computed(() => {
@@ -381,6 +393,9 @@ const activities = computed(() => {
 function filterActivities(eventType: TicketTab) {
   if (eventType === "activity") {
     return activities.value;
+  }
+  if (eventType === "time") {
+    return ticket.data.time_entries || [];
   }
   return activities.value.filter((activity) => activity.type === eventType);
 }

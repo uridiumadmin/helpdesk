@@ -13,6 +13,7 @@ export const AGENT_PORTAL_TEAM_SINGLE = "Team";
 export const AGENT_PORTAL_TICKET = "TicketAgent";
 export const AGENT_PORTAL_TICKET_LIST = "TicketsAgent";
 export const AGENT_PORTAL_KNOWLEDGE_BASE = "DeskKBHome";
+export const AGENT_PORTAL_TIME_ENTRY = "TimeEntryReport";
 
 export const CUSTOMER_PORTAL_LANDING = "TicketsCustomer";
 export const AGENT_PORTAL_LANDING = AGENT_PORTAL_TICKET_LIST;
@@ -180,6 +181,11 @@ const routes = [
         path: "canned-responses",
         name: "CannedResponses",
         component: () => import("@/pages/CannedResponses.vue"),
+      },
+      {
+        path: "time-entry",
+        name: AGENT_PORTAL_TIME_ENTRY,
+        component: () => import("@/pages/desk/time-entry/TimeEntryReport.vue"),
       },
     ],
   },
