@@ -1,0 +1,6 @@
+{
+  "name": "Helpdesk",
+  "language": "python",
+  "setup_script": "setup.sh",
+  "entry_point": "bench start"
+}
