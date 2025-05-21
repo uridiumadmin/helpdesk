@@ -1,3 +1,104 @@
+# Uridium Helpdesk – Development Environment
+
+Ovo je moderni Helpdesk UI i backend razvijen za Uridium, optimizovan za brzu izradu i testiranje novih funkcionalnosti uz pomoć AI (Codex/ChatGPT).
+
+---
+
+## 🚀 Tehnologije
+
+- **Frontend:** Vue 3, Tailwind CSS, Frappe UI
+- **Backend:** Frappe (Python) *(ako koristiš backend, navedi tačnu putanju dole)*
+- **Build alati:** Yarn (ili npm)
+
+---
+
+## 📂 Struktura projekta
+
+helpdesk/
+├── desk/
+│ └── src/
+│ ├── assets/ # Stilovi, slike, ikonice
+│ └── components/ # Vue komponente (ticket, comments, activity, time entry itd.)
+│ ├── ticket/
+│ ├── comments/
+│ ├── activity/
+│ ├── time-entry/
+│ ├── ... (ostale grupe komponenti)
+├── helpers/ # Helpers/utilities
+├── workflows/ # Workflow konfiguracije
+├── package.json # Frontend dependencies
+├── requirements.txt # Backend dependencies (ako koristiš Python backend)
+└── README.md
+
+
+- **Glavni frontend kod:** `desk/src/components/`
+  - Podfolderi: `ticket/`, `comments/`, `activity/`, `time-entry/`, itd.
+- **Assets (slike, ikonice, stilovi):** `desk/src/assets/`
+- **Helpers, workflows:** u root folderima
+- **Backend kod:** *(navedi gde je – npr. `apps/helpdesk/helpdesk/` ili `backend/`)*
+- **Testovi:** *(navedi gde su, npr. `tests/` ili `desk/tests/`)*
+
+---
+
+## 🛠️ Build & Pokretanje
+
+**Frontend:**
+```bash
+cd desk
+yarn install      # ili npm install
+yarn dev          # ili npm run dev
+
+**Backend Frappe/Python):**
+
+helpdesk/helpdesk folder i podfolderi
+
+pip install -r requirements.txt
+
+
+
+🤖 Codex/ChatGPT/AI – Task Brief
+Ovo okruženje je pripremljeno za razvoj i generisanje novih funkcionalnosti uz AI asistente (Codex, ChatGPT).
+
+Glavni taskovi za AI:
+Dodavanje i proširenje Vue komponenti (tabovi, modali, sidebar elementi…)
+
+Dodavanje Time Entry tab-a i integracije sa Activity feed-om i sidebar štopericom
+
+Proširenje postojeće funkcionalnosti za tickets, comments, notifications
+
+Koristi Frappe UI komponente i Tailwind CSS za frontend kod
+
+Povezivanje frontenda i backenda kroz REST/Frappe RPC
+
+Glavni frontend kod nalazi se u:
+desk/src/components/
+
+📌 Primeri taskova za AI
+Dodaj tab “Time Entry” u ticket view (desk/src/components/ticket/), sa istim izgledom i funkcijom kao Comments tab.
+
+Prikaži sve unose vremena u Time Entry tab-u, koristi dizajn Comments liste.
+
+Dodaj dugme “New Time Entry” (desno, kao New Comment) koje otvara modal (Frappe UI).
+
+Unosi vremena moraju biti vidljivi i u Activity feed-u.
+
+U sidebar (desni deo, na dnu) dodaj štopericu (timer) kao Vue komponentu, koristi Frappe UI i Tailwind.
+
+Poveži Time Entry tab i sidebar štopericu sa backend-om (ako postoji API).
+
+
+
+🧑‍💻 Saveti za razvoj
+Svi novi UI elementi treba da koriste Frappe UI komponente i Tailwind klase za stil.
+
+Vue komponente organizuj u odgovarajuće podfoldere unutar desk/src/components/.
+
+Izmene backend koda piši u dogovorenoj backend lokaciji.
+
+README.md ažuriraj kod većih promena u strukturi.
+
+
+
 <div align="center" markdown="1">
 
 <img src=".github/hd-logo.svg" alt="Frappe Helpdesk logo" width="80"/>
