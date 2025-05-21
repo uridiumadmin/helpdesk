@@ -2,6 +2,11 @@ import { createResource } from "frappe-ui";
 
 export const newTimeEntry = createResource({
   url: "helpdesk.helpdesk.doctype.hd_ticket.api.new_time_entry",
+  makeParams(values) {
+    return {
+      doc: values,
+    };
+  },
 });
 
 export const getTimeEntries = createResource({
