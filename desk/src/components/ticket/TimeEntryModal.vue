@@ -52,17 +52,25 @@
 </template>
 
 <script setup lang="ts">
-import { reactive, watch } from "vue";
-import { Dialog, Button, FormControl, DateTimePicker } from "frappe-ui";
-import { createToast } from "@/utils";
-import { newTimeEntry, getTimeEntries } from "@/stores/timeEntry";
+
+import { reactive, watch } from 'vue';
+import { Dialog, Button, FormControl, DateTimePicker } from 'frappe-ui';
+import { createToast } from '@/utils';
+import { newTimeEntry, getTimeEntries } from '@/stores/timeEntry';
 
 interface Props {
   ticketId: string;
-  initialHours?: number | null;
+  defaultFromTime?: string | null;
+  defaultToTime?: string | null;
+  defaultHours?: number | null;
+
 }
 
-const props = defineProps<Props>();
+const props = withDefaults(defineProps<Props>(), {
+  defaultFromTime: null,
+  defaultToTime: null,
+  defaultHours: null,
+});
 const showDialog = defineModel<boolean>();
 const emit = defineEmits(["update"]);
 
@@ -75,11 +83,18 @@ const form = reactive({
   show_on_invoice: true,
 });
 
-watch(showDialog, (val) => {
-  if (val && props.initialHours != null) {
-    form.hours = props.initialHours;
+
+watch(
+  () => showDialog.value,
+  (val) => {
+    if (val) {
+      form.from_time = props.defaultFromTime;
+      form.to_time = props.defaultToTime;
+      form.hours = props.defaultHours;
+    }
   }
-});
+);
+
 
 function handleSubmit() {
   newTimeEntry.submit(
