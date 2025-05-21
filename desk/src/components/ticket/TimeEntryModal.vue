@@ -60,6 +60,7 @@ import { Dialog, Button, FormControl, DateTimePicker } from 'frappe-ui';
 import { createToast } from '@/utils';
 import { newTimeEntry, getTimeEntries } from '@/stores/timeEntry';
 import { dayjs } from '@/dayjs';
+import { useError } from '@/composables/error';
 
 interface Props {
   ticketId: string;
@@ -76,6 +77,7 @@ const props = withDefaults(defineProps<Props>(), {
 });
 const showDialog = defineModel<boolean>();
 const emit = defineEmits(["update"]);
+const showError = useError();
 
 const form = reactive({
   from_time: null as string | null,
@@ -99,47 +101,51 @@ watch(
 );
 
 
-function handleSubmit() {
-  newTimeEntry.submit(
-    {
-      reference_ticket: props.ticketId,
-      from_time: form.from_time
-        ? dayjs(form.from_time).format('YYYY-MM-DD HH:mm:ss')
-        : null,
-      to_time: form.to_time
-        ? dayjs(form.to_time).format('YYYY-MM-DD HH:mm:ss')
-        : null,
-      hours: form.hours,
-      description: form.description,
-      billable: form.billable ? 1 : 0,
-      show_on_invoice: form.show_on_invoice ? 1 : 0,
-    },
-    {
-      validate: (params) => {
-        if (!params.from_time) return "From Time is required";
-        if (!params.to_time) return "To Time is required";
-        if (!params.hours) return "Hours is required";
+async function handleSubmit() {
+  try {
+    await newTimeEntry.submit(
+      {
+        reference_ticket: props.ticketId,
+        from_time: form.from_time
+          ? dayjs(form.from_time).format('YYYY-MM-DD HH:mm:ss')
+          : null,
+        to_time: form.to_time
+          ? dayjs(form.to_time).format('YYYY-MM-DD HH:mm:ss')
+          : null,
+        hours: form.hours,
+        description: form.description,
+        billable: form.billable ? 1 : 0,
+        show_on_invoice: form.show_on_invoice ? 1 : 0,
       },
-      onSuccess: async () => {
-        createToast({
-          title: "Time entry added",
-          icon: "check",
-          iconClasses: "text-green-600",
-        });
-        const res = await getTimeEntries.update({
-          params: { ticket: props.ticketId },
-        });
-        emit("update", res);
-        showDialog.value = false;
-        form.from_time = null;
-        form.to_time = null;
-        form.hours = null;
-        form.description = "";
-        form.billable = true;
-        form.show_on_invoice = true;
+      {
+        validate: (params) => {
+          if (!params.from_time) return "From Time is required";
+          if (!params.to_time) return "To Time is required";
+          if (!params.hours) return "Hours is required";
+        },
+        onSuccess: async () => {
+          createToast({
+            title: "Time entry added",
+            icon: "check",
+            iconClasses: "text-green-600",
+          });
+          const res = await getTimeEntries.update({
+            params: { ticket: props.ticketId },
+          });
+          emit("update", res);
+          showDialog.value = false;
+          form.from_time = null;
+          form.to_time = null;
+          form.hours = null;
+          form.description = "";
+          form.billable = true;
+          form.show_on_invoice = true;
+        },
       },
-    },
-  );
+    );
+  } catch (e) {
+    showError(e as any);
+  }
 }
 </script>
 
