@@ -52,26 +52,33 @@
 </template>
 
 <script setup lang="ts">
-import { reactive } from 'vue';
-import { Dialog, Button, FormControl, DateTimePicker } from 'frappe-ui';
-import { createToast } from '@/utils';
-import { newTimeEntry, getTimeEntries } from '@/stores/timeEntry';
+import { reactive, watch } from "vue";
+import { Dialog, Button, FormControl, DateTimePicker } from "frappe-ui";
+import { createToast } from "@/utils";
+import { newTimeEntry, getTimeEntries } from "@/stores/timeEntry";
 
 interface Props {
   ticketId: string;
+  initialHours?: number | null;
 }
 
 const props = defineProps<Props>();
 const showDialog = defineModel<boolean>();
-const emit = defineEmits(['update']);
+const emit = defineEmits(["update"]);
 
 const form = reactive({
   from_time: null as string | null,
   to_time: null as string | null,
   hours: null as number | null,
-  description: '',
+  description: "",
   billable: true,
   show_on_invoice: true,
+});
+
+watch(showDialog, (val) => {
+  if (val && props.initialHours != null) {
+    form.hours = props.initialHours;
+  }
 });
 
 function handleSubmit() {
@@ -87,29 +94,29 @@ function handleSubmit() {
     },
     {
       validate: (params) => {
-        if (!params.from_time) return 'From Time is required';
-        if (!params.to_time) return 'To Time is required';
-        if (!params.hours) return 'Hours is required';
+        if (!params.from_time) return "From Time is required";
+        if (!params.to_time) return "To Time is required";
+        if (!params.hours) return "Hours is required";
       },
       onSuccess: async () => {
         createToast({
-          title: 'Time entry added',
-          icon: 'check',
-          iconClasses: 'text-green-600',
+          title: "Time entry added",
+          icon: "check",
+          iconClasses: "text-green-600",
         });
         const res = await getTimeEntries.update({
           params: { ticket: props.ticketId },
         });
-        emit('update', res);
+        emit("update", res);
         showDialog.value = false;
         form.from_time = null;
         form.to_time = null;
         form.hours = null;
-        form.description = '';
+        form.description = "";
         form.billable = true;
         form.show_on_invoice = true;
       },
-    }
+    },
   );
 }
 </script>
