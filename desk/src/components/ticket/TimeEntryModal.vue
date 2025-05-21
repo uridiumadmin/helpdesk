@@ -5,12 +5,14 @@
         <DateTimePicker
           v-model="form.from_time"
           label="From Time"
+          name="from_time"
           class="form-control"
           :options="{ enableTime: true, dateFormat: 'Y-m-d H:i:S' }"
         />
         <DateTimePicker
           v-model="form.to_time"
           label="To Time"
+          name="to_time"
           class="form-control"
           :options="{ enableTime: true, dateFormat: 'Y-m-d H:i:S' }"
         />
@@ -18,18 +20,21 @@
           v-model="form.hours"
           type="number"
           label="Hours"
+          name="hours"
           class="form-control"
         />
         <FormControl
           v-model="form.description"
           type="textarea"
           label="Description"
+          name="description"
           class="form-control"
         />
         <FormControl
           v-model="form.billable"
           type="checkbox"
           label="Billable"
+          name="billable"
           class="form-control"
         />
         <FormControl
@@ -37,6 +42,7 @@
           v-model="form.show_on_invoice"
           type="checkbox"
           label="Show on Invoice"
+          name="show_on_invoice"
           class="form-control"
         />
       </div>
@@ -54,20 +60,18 @@
 </template>
 
 <script setup lang="ts">
-
-import { reactive, watch } from 'vue';
-import { Dialog, Button, FormControl, DateTimePicker } from 'frappe-ui';
-import { createToast } from '@/utils';
-import { newTimeEntry, getTimeEntries } from '@/stores/timeEntry';
-import { dayjs } from '@/dayjs';
-import { useError } from '@/composables/error';
+import { reactive, watch } from "vue";
+import { Dialog, Button, FormControl, DateTimePicker } from "frappe-ui";
+import { createToast } from "@/utils";
+import { newTimeEntry, getTimeEntries } from "@/stores/timeEntry";
+import { dayjs } from "@/dayjs";
+import { useError } from "@/composables/error";
 
 interface Props {
   ticketId: string;
   defaultFromTime?: string | null;
   defaultToTime?: string | null;
   defaultHours?: number | null;
-
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -88,7 +92,6 @@ const form = reactive({
   show_on_invoice: true,
 });
 
-
 watch(
   () => showDialog.value,
   (val) => {
@@ -97,9 +100,8 @@ watch(
       form.to_time = props.defaultToTime;
       form.hours = props.defaultHours;
     }
-  }
+  },
 );
-
 
 async function handleSubmit() {
   try {
@@ -107,10 +109,10 @@ async function handleSubmit() {
       {
         reference_ticket: props.ticketId,
         from_time: form.from_time
-          ? dayjs(form.from_time).format('YYYY-MM-DD HH:mm:ss')
+          ? dayjs(form.from_time).format("YYYY-MM-DD HH:mm:ss")
           : null,
         to_time: form.to_time
-          ? dayjs(form.to_time).format('YYYY-MM-DD HH:mm:ss')
+          ? dayjs(form.to_time).format("YYYY-MM-DD HH:mm:ss")
           : null,
         hours: form.hours,
         description: form.description,

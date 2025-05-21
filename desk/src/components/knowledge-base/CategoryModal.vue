@@ -10,13 +10,16 @@
           ref="titleRef"
           placeholder="Support Issues"
           v-model="newTitle"
+          name="title"
           :rows="1"
           maxlength="50"
           autofocus
-          @input="(e: Event) => {
-            const target = e.target as HTMLTextAreaElement;
-            target.style.height = `${target.scrollHeight}px`;
-          }"
+          @input="
+            (e: Event) => {
+              const target = e.target as HTMLTextAreaElement;
+              target.style.height = `${target.scrollHeight}px`;
+            }
+          "
         />
       </div>
     </template>
@@ -46,7 +49,7 @@ const showDialog = defineModel<boolean>();
 const newTitle = defineModel<string>("title");
 
 const dialogTitle = computed(() =>
-  props.edit ? "Edit Category" : "Create Category"
+  props.edit ? "Edit Category" : "Create Category",
 );
 
 const titleRef = ref(null);
@@ -58,7 +61,7 @@ watch(
       newVal.scrollHeight > newVal.clientHeight
         ? newVal.scrollHeight + "px"
         : newVal.scrollHeight + "px";
-  }
+  },
 );
 
 function getActionButton() {
