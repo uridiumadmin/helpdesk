@@ -6,11 +6,13 @@
           v-model="form.from_time"
           label="From Time"
           class="form-control"
+          :options="{ enableTime: true, dateFormat: 'Y-m-d H:i:S' }"
         />
         <DateTimePicker
           v-model="form.to_time"
           label="To Time"
           class="form-control"
+          :options="{ enableTime: true, dateFormat: 'Y-m-d H:i:S' }"
         />
         <FormControl
           v-model="form.hours"
@@ -57,6 +59,7 @@ import { reactive, watch } from 'vue';
 import { Dialog, Button, FormControl, DateTimePicker } from 'frappe-ui';
 import { createToast } from '@/utils';
 import { newTimeEntry, getTimeEntries } from '@/stores/timeEntry';
+import { dayjs } from '@/dayjs';
 
 interface Props {
   ticketId: string;
@@ -100,8 +103,12 @@ function handleSubmit() {
   newTimeEntry.submit(
     {
       reference_ticket: props.ticketId,
-      from_time: form.from_time,
-      to_time: form.to_time,
+      from_time: form.from_time
+        ? dayjs(form.from_time).format('YYYY-MM-DD HH:mm:ss')
+        : null,
+      to_time: form.to_time
+        ? dayjs(form.to_time).format('YYYY-MM-DD HH:mm:ss')
+        : null,
       hours: form.hours,
       description: form.description,
       billable: form.billable ? 1 : 0,
