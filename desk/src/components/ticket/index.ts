@@ -4,4 +4,3 @@ export { default as TicketTimeEntry } from "./TicketTimeEntry.vue";
 export { default as TimeEntryModal } from "./TimeEntryModal.vue";
 export { default as SidebarTimer } from "./SidebarTimer.vue";
 export { default as TimeEntryBox } from "../TimeEntryBox.vue";
-export { default as SidebarTimer } from "./SidebarTimer.vue";
