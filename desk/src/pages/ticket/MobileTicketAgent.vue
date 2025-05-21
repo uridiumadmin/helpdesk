@@ -86,16 +86,7 @@
                 />
               </div>
 
-              <!-- Time Entries -->
-              <TicketTimeEntry
-                v-else-if="tab.name === 'time'"
-                :entries="ticket.data.time_entries"
-                :ticket-id="ticket.data.name"
-                @update="(e) => (ticket.data.time_entries = e)"
-              />
-              <!-- Rest Activities -->
               <TicketAgentActivities
-                v-else
                 ref="ticketAgentActivitiesRef"
                 :activities="filterActivities(tab.name)"
                 :title="tab.label"
@@ -201,7 +192,6 @@ import {
   CommunicationArea,
 } from "@/components";
 import { TicketAgentActivities } from "@/components/ticket";
-import { TicketTimeEntry } from "@/components/ticket";
 import {
   ActivityIcon,
   CommentIcon,
@@ -327,7 +317,7 @@ const tabs: TabObject[] = [
     icon: CommentIcon,
   },
   {
-    name: "time",
+    name: "time-entry",
     label: "Time Entry",
     icon: LucideClock,
   },
@@ -374,7 +364,21 @@ const activities = computed(() => {
     }
   );
 
-  const sorted = [...emailProps, ...commentProps, ...historyProps].sort(
+  const timeEntryProps = ticket.data.time_entries.map((entry) => {
+    return {
+      type: "time-entry",
+      key: entry.creation,
+      creation: entry.creation,
+      owner: entry.owner,
+      hours: entry.hours,
+      description: entry.description,
+      from_time: entry.from_time,
+      to_time: entry.to_time,
+      content: entry.description,
+    };
+  });
+
+  const sorted = [...emailProps, ...commentProps, ...historyProps, ...timeEntryProps].sort(
     (a, b) => new Date(a.creation) - new Date(b.creation)
   );
 
@@ -407,9 +411,6 @@ const activities = computed(() => {
 function filterActivities(eventType: TicketTab) {
   if (eventType === "activity") {
     return activities.value;
-  }
-  if (eventType === "time") {
-    return ticket.data.time_entries || [];
   }
   return activities.value.filter((activity) => activity.type === eventType);
 }
