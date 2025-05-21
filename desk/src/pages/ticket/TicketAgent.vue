@@ -61,7 +61,8 @@
               <TicketTimeEntry
                 v-if="tab.name === 'time'"
                 :entries="ticket.data.time_entries"
-                @add="() => {}"
+                :ticket-id="ticket.data.name"
+                @update="(e) => (ticket.data.time_entries = e)"
               />
               <TicketAgentActivities
                 v-else

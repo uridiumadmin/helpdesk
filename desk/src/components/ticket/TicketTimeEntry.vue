@@ -10,14 +10,31 @@
       </div>
       <div class="text-gray-600 text-sm">{{ entry.description }}</div>
     </div>
-    <Button class="mt-4" label="Add Time Entry" @click="$emit('add')" />
+    <Button class="mt-4" label="Add Time Entry" @click="showModal = true" />
+    <TimeEntryModal
+      v-model="showModal"
+      :ticket-id="ticketId"
+      @update="(e) => emitUpdate(e)"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
-import { Button } from "frappe-ui";
+import { ref } from 'vue';
+import { Button } from 'frappe-ui';
+import TimeEntryModal from './TimeEntryModal.vue';
 
-defineProps<{ entries: any[] }>();
+interface Props {
+  entries: any[];
+  ticketId: string;
+}
 
-defineEmits(["add"]);
+const props = defineProps<Props>();
+const emit = defineEmits(['update']);
+
+const showModal = ref(false);
+
+function emitUpdate(e: any[]) {
+  emit('update', e);
+}
 </script>
