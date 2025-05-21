@@ -36,6 +36,7 @@
     <TicketAgentDetails :ticket="ticket" />
     <!-- fields -->
     <TicketAgentFields :ticket="ticket" @update="update" />
+    <SidebarTimer :ticket-id="ticket.name" />
     <TicketMergeModal
       :ticket="ticket"
       v-if="showMergeModal"
@@ -51,6 +52,7 @@ import TicketAgentDetails from "./TicketAgentDetails.vue";
 import TicketAgentContact from "./TicketAgentContact.vue";
 import TicketAgentFields from "./TicketAgentFields.vue";
 import TicketMergeModal from "./TicketMergeModal.vue";
+import SidebarTimer from "./SidebarTimer.vue";
 import LucideMerge from "~icons/lucide/merge";
 import { copyToClipboard } from "@/utils";
 import { Ticket } from "@/types";
