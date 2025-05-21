@@ -40,7 +40,8 @@ export default defineConfig({
         display: "standalone",
         name: "Frappe Helpdesk",
         short_name: "Helpdesk",
-        start_url: "/helpdesk",
+        start_url: "/helpdesk/",
+        scope: "/helpdesk/",
         description:
           "Modern, Streamlined, Free and Open Source Customer Service Software",
         icons: [
