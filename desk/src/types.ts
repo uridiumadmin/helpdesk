@@ -215,7 +215,12 @@ export interface EmailAccount {
   default_incoming?: boolean;
 }
 
-export type TicketTab = "activity" | "email" | "comment" | "details";
+export type TicketTab =
+  | "activity"
+  | "email"
+  | "comment"
+  | "details"
+  | "time-entry";
 
 export interface TabObject {
   name: TicketTab;
@@ -330,7 +335,20 @@ export interface CommentActivity extends BaseActivity {
   attachments: FileAttachment[];
 }
 
-export type TicketActivity = HistoryActivity | EmailActivity | CommentActivity;
+export interface TimeEntryActivity extends BaseActivity {
+  type: "time-entry";
+  owner: string;
+  hours: number;
+  description: string;
+  from_time: string;
+  to_time: string;
+}
+
+export type TicketActivity =
+  | HistoryActivity
+  | EmailActivity
+  | CommentActivity
+  | TimeEntryActivity;
 
 interface FileAttachment {
   name: string;

@@ -23,10 +23,18 @@
               ]"
             >
               <Avatar
-                v-if="activity.type === 'email'"
+                v-if="activity.type === 'email' || activity.type === 'time-entry'"
                 size="md"
-                :label="activity.sender?.full_name"
-                :image="getUser(activity.sender?.name).user_image"
+                :label="
+                  activity.type === 'email'
+                    ? activity.sender?.full_name
+                    : getUser(activity.owner).full_name
+                "
+                :image="
+                  activity.type === 'email'
+                    ? getUser(activity.sender?.name).user_image
+                    : getUser(activity.owner).user_image
+                "
                 class="bg-white"
               />
               <CommentIcon
@@ -51,7 +59,8 @@
               :activity="activity"
               @update="() => emit('update')"
             />
-            <HistoryBox v-else :activity="activity" />
+            <HistoryBox v-else-if="activity.type === 'history'" :activity="activity" />
+            <TimeEntryBox v-else :activity="activity" />
           </div>
         </div>
       </div>
@@ -86,7 +95,7 @@ import {
   EmailIcon,
   ActivityIcon,
 } from "@/components/icons";
-import { EmailArea, CommentBox, HistoryBox } from "@/components";
+import { EmailArea, CommentBox, HistoryBox, TimeEntryBox } from "@/components";
 import { useUserStore } from "@/stores/user";
 import { Avatar } from "frappe-ui";
 import { TicketActivity } from "@/types";
