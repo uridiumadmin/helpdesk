@@ -104,7 +104,7 @@ const headerOptions = [
     icon: "file-text",
     onClick: async () => {
       if (!generalCategory.data) {
-        await generalCategory.update({});
+        await generalCategory.fetch();
       }
       router.push({
         name: "NewArticle",
