@@ -20,7 +20,7 @@
       :default-to-time="toTime"
       :default-hours="hours"
 
-      @update="(e) => emit('update', e)"
+      @update="(e) => { emit('update', e); resetTimer(); }"
     />
   </div>
 </template>
@@ -70,6 +70,15 @@ function openModal() {
   }
   if (!start.value) return;
   showModal.value = true;
+}
+
+function resetTimer() {
+  running.value = false;
+  start.value = null;
+  end.value = null;
+  elapsed.value = 0;
+  clearInterval(interval);
+  interval = null;
 }
 
 const formatted = computed(() => {
