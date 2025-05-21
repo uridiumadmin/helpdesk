@@ -1,4 +1,5 @@
 <template>
+
   <div class="flex flex-col gap-2 border-t p-4">
     <div class="flex items-center justify-between">
       <span class="text-sm font-medium text-gray-700">{{ formatted }}</span>
@@ -18,20 +19,24 @@
       :default-from-time="fromTime"
       :default-to-time="toTime"
       :default-hours="hours"
+
       @update="(e) => emit('update', e)"
     />
   </div>
 </template>
 
 <script setup lang="ts">
+
 import { ref, computed } from 'vue';
 import { Button } from 'frappe-ui';
 import TimeEntryModal from './TimeEntryModal.vue';
 import { dayjs } from '@/dayjs';
 
+
 interface Props {
   ticketId: string;
 }
+
 
 const props = defineProps<Props>();
 const emit = defineEmits(['update']);
@@ -92,6 +97,7 @@ const toTime = computed(() => {
     return dayjs().format();
   }
   return end.value ? end.value.format() : null;
+
 });
 </script>
 
