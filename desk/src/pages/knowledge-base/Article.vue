@@ -75,6 +75,7 @@
             class="w-full resize-none border-0 text-3xl font-bold placeholder-ink-gray-3 p-0 pb-3 border-b border-gray-200 focus:ring-0 focus:border-gray-200 overflow-hidden"
             v-model="title"
             placeholder="Title"
+            name="title"
             rows="1"
             wrap="soft"
             maxlength="140"
@@ -89,9 +90,11 @@
           :content="textEditorContentWithIDs"
           :extensions="[PreserveIds]"
           :editable="editable"
-          @change="(event:string) => {
-			      content = event;
-		      }"
+          @change="
+            (event: string) => {
+              content = event;
+            }
+          "
           placeholder="Write your article here..."
         >
           <template #bottom v-if="editable">
@@ -176,7 +179,7 @@ watch(
     if (newVal.scrollHeight > newVal.clientHeight) {
       newVal.style.height = newVal.scrollHeight + "px";
     }
-  }
+  },
 );
 
 const article: Resource<Article> = createResource({
@@ -220,7 +223,7 @@ function incrementArticleViews(articleId: string) {
           return;
         }
       },
-    }
+    },
   );
 }
 
@@ -237,7 +240,7 @@ const toggleStatus = debounce(() => {
       onSuccess: () => {
         article.reload();
       },
-    }
+    },
   );
 }, 300);
 const isDirty = ref(false);
@@ -268,7 +271,7 @@ function handleMoveToCategory(category: string) {
         });
         moveToModal.value = false;
       },
-    }
+    },
   );
 }
 
@@ -315,7 +318,7 @@ function handleArticleUpdate() {
         isDirty.value = false;
         article.reload();
       },
-    }
+    },
   );
 }
 
@@ -344,7 +347,7 @@ function handleDelete() {
                   name: "AgentKnowledgeBase",
                 });
               },
-            }
+            },
           );
           close();
         },
@@ -354,7 +357,7 @@ function handleDelete() {
 }
 
 const textEditorContentWithIDs = computed(() =>
-  article.data?.content ? addLinksToHeadings(article.data?.content) : null
+  article.data?.content ? addLinksToHeadings(article.data?.content) : null,
 );
 
 function addLinksToHeadings(content: string) {

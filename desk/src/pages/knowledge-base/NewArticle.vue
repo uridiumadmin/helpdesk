@@ -39,15 +39,16 @@
           class="w-full resize-none border-0 text-3xl font-bold placeholder-ink-gray-3 p-0 pb-3 border-b border-gray-200 focus:ring-0 focus:border-gray-200"
           v-model="title"
           placeholder="Title"
+          name="title"
           rows="1"
           wrap="soft"
           maxlength="140"
           autofocus
           @input="
-          (e: Event) => {
-            const target = e.target as HTMLTextAreaElement;
-            target.style.height = `${target.scrollHeight}px`;
-          }
+            (e: Event) => {
+              const target = e.target as HTMLTextAreaElement;
+              target.style.height = `${target.scrollHeight}px`;
+            }
           "
         />
         <!-- Article Content -->
@@ -133,7 +134,7 @@ function handleCreateArticle() {
           iconClasses: "text-red-600",
         });
       },
-    }
+    },
   );
 }
 function handleArticleDiscard() {
