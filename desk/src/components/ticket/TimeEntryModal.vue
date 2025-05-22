@@ -92,28 +92,42 @@ const form = reactive({
   show_on_invoice: true,
 });
 
+// Inicijalizacija forme prilikom otvaranja modala.
+// Uzimamo vrednosti iz props-a, a ukoliko defaultFromTime ne postoji, koristi se trenutno vreme.
 watch(
   () => showDialog.value,
   (val) => {
     if (val) {
-      form.from_time = props.defaultFromTime;
+      form.from_time = props.defaultFromTime || dayjs().format("YYYY-MM-DD HH:mm:ss");
       form.to_time = props.defaultToTime;
       form.hours = props.defaultHours;
     }
   },
 );
 
+// Funkcija za normalizaciju datuma – prazne stringove tretiramo kao null
+function normalizeDate(val: string | null) {
+  if (val === "" || !val) {
+    return null;
+  }
+  return dayjs(val).format("YYYY-MM-DD HH:mm:ss");
+}
+
 async function handleSubmit() {
+  // Debagovanje – proveravamo vrednosti pre validacije
+  console.log("Pre validacije, from_time =", form.from_time);
+  console.log("Pre validacije, to_time =", form.to_time);
+
+  // Normalizujemo vrednosti pre slanja
+  const fromTimeFormatted = normalizeDate(form.from_time);
+  const toTimeFormatted = normalizeDate(form.to_time);
+
   try {
     await newTimeEntry.submit(
       {
         reference_ticket: props.ticketId,
-        from_time: form.from_time
-          ? dayjs(form.from_time).format("YYYY-MM-DD HH:mm:ss")
-          : null,
-        to_time: form.to_time
-          ? dayjs(form.to_time).format("YYYY-MM-DD HH:mm:ss")
-          : null,
+        from_time: fromTimeFormatted,
+        to_time: toTimeFormatted,
         hours: form.hours,
         description: form.description,
         billable: form.billable ? 1 : 0,
@@ -136,14 +150,15 @@ async function handleSubmit() {
           });
           emit("update", res);
           showDialog.value = false;
-          form.from_time = null;
+          // Resetovanje forme
+          form.from_time = props.defaultFromTime || dayjs().format("YYYY-MM-DD HH:mm:ss");
           form.to_time = null;
           form.hours = null;
           form.description = "";
           form.billable = true;
           form.show_on_invoice = true;
         },
-      },
+      }
     );
   } catch (e) {
     showError(e as any);
