@@ -1,0 +1,15 @@
+node_modules
+.expo
+.expo-shared
+dist
+coverage
+.DS_Store
+*.keystore
+*.pem
+*.p12
+*.p8
+*.jks
+*.pfx
+*.key
+.env
+.env.*

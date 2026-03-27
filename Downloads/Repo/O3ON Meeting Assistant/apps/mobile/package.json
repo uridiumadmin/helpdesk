@@ -1,0 +1,31 @@
+{
+  "name": "o3on-meeting-assistant-mobile",
+  "version": "0.1.0",
+  "private": true,
+  "main": "expo/AppEntry.js",
+  "scripts": {
+    "start": "expo start",
+    "android": "expo run:android",
+    "ios": "expo run:ios",
+    "web": "expo start --web",
+    "typecheck": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=18 <19"
+  },
+  "dependencies": {
+    "expo": "~51.0.28",
+    "expo-av": "~14.0.7",
+    "expo-constants": "~16.0.2",
+    "expo-keep-awake": "~13.0.2",
+    "expo-secure-store": "~13.0.2",
+    "expo-status-bar": "~1.12.1",
+    "react": "18.2.0",
+    "react-native": "0.74.5"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.5",
+    "@types/react": "^18.3.3",
+    "typescript": "^5.5.4"
+  }
+}

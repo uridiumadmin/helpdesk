@@ -1,0 +1,16 @@
+{
+  "expo": {
+    "name": "O3ON Meeting Assistant",
+    "slug": "o3on-meeting-assistant",
+    "scheme": "o3onmeetingassistant",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "updates": {
+      "fallbackToCacheTimeout": 0
+    }
+  }
+}

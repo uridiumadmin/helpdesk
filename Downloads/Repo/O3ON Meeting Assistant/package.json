@@ -1,0 +1,13 @@
+{
+  "name": "o3on-meeting-assistant",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "pnpm@10.12.1",
+  "scripts": {
+    "build": "pnpm -r build",
+    "dev:api": "pnpm --filter @o3on/api start:dev",
+    "dev:mobile": "pnpm --dir apps/mobile start",
+    "lint": "pnpm -r lint",
+    "test": "pnpm --filter @o3on/api test && python3 -m unittest discover -s services/audio-worker/tests -p 'test_*.py'"
+  }
+}

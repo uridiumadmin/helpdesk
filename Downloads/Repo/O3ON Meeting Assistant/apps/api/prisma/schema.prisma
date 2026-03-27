@@ -1,0 +1,112 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Organization {
+  id        String    @id @default(uuid())
+  name      String
+  createdAt DateTime  @default(now()) @map("created_at")
+  users     User[]
+  meetings  Meeting[]
+
+  @@map("organizations")
+}
+
+model User {
+  id        String       @id @default(uuid())
+  email     String
+  fullName  String?      @map("full_name")
+  role      String       @default("member")
+  orgId     String       @map("org_id")
+  org       Organization @relation(fields: [orgId], references: [id])
+  createdAt DateTime     @default(now()) @map("created_at")
+  meetings  Meeting[]
+
+  @@map("users")
+}
+
+model Meeting {
+  id              String           @id @default(uuid())
+  title           String
+  startsAt        DateTime         @default(now()) @map("starts_at")
+  durationMinutes Int              @default(60) @map("duration_minutes")
+  language        String           @default("sr-RS")
+  status          String           @default("draft")
+  summary         String?
+  orgId           String           @map("org_id")
+  org             Organization     @relation(fields: [orgId], references: [id])
+  createdById     String           @map("created_by_id")
+  createdBy       User             @relation(fields: [createdById], references: [id])
+  createdAt       DateTime         @default(now()) @map("created_at")
+  updatedAt       DateTime         @updatedAt @map("updated_at")
+  participants    Participant[]
+  uploads         Upload[]
+  artifact        MeetingArtifact?
+  processingJobs  ProcessingJob[]
+
+  @@index([orgId])
+  @@map("meetings")
+}
+
+model Participant {
+  id               String  @id @default(uuid())
+  meetingId        String  @map("meeting_id")
+  meeting          Meeting @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  name             String
+  email            String?
+  speakerLabel     String? @map("speaker_label")
+  enrollmentStatus String  @default("pending") @map("enrollment_status")
+
+  @@map("participants")
+}
+
+model Upload {
+  id            String    @id @default(uuid())
+  meetingId     String    @map("meeting_id")
+  meeting       Meeting   @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  objectKey     String    @map("object_key")
+  expectedParts Int       @default(1) @map("expected_parts")
+  completedAt   DateTime? @map("completed_at")
+  filePath      String?   @map("file_path")
+  fileName      String?   @map("file_name")
+  fileSizeBytes BigInt?   @map("file_size_bytes")
+  contentType   String?   @map("content_type")
+
+  @@map("uploads")
+}
+
+model MeetingArtifact {
+  id               String   @id @default(uuid())
+  meetingId        String   @unique @map("meeting_id")
+  meeting          Meeting  @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  summaryText      String   @map("summary_text") @db.Text
+  transcriptJson   Json     @default("[]") @map("transcript_json")
+  minutesJson      Json     @default("[]") @map("minutes_json")
+  decisionsJson    Json     @default("[]") @map("decisions_json")
+  risksJson        Json     @default("[]") @map("risks_json")
+  openQuestionsJson Json    @default("[]") @map("open_questions_json")
+  actionItemsJson  Json     @default("[]") @map("action_items_json")
+  needsReview      Boolean  @default(false) @map("needs_review")
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  @@map("meeting_artifacts")
+}
+
+model ProcessingJob {
+  id               String    @id @default(uuid())
+  meetingId        String    @map("meeting_id")
+  meeting          Meeting   @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  status           String    @default("pending")
+  startedAt        DateTime  @default(now()) @map("started_at")
+  completedAt      DateTime? @map("completed_at")
+  errorMessage     String?   @map("error_message") @db.Text
+  workerResultJson Json?     @map("worker_result_json")
+
+  @@index([meetingId])
+  @@map("processing_jobs")
+}
