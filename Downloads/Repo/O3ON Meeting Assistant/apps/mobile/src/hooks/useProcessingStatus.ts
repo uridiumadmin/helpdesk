@@ -14,16 +14,26 @@ export function useProcessingStatus(
   token: string,
   meetingId: string,
   enabled: boolean,
-  intervalMs = 4000
+  initialIntervalMs = 2000,
+  maxIntervalMs = 60000
 ): ProcessingStatus {
   const [data, setData] = useState<MeetingStatusResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const intervalRef = useRef(initialIntervalMs);
+  const lastStatusRef = useRef<string | undefined>(undefined);
 
   useEffect(() => {
     if (!enabled) return;
 
     let cancelled = false;
+    intervalRef.current = initialIntervalMs;
+    lastStatusRef.current = undefined;
+
+    function scheduleNext() {
+      if (cancelled) return;
+      timerRef.current = setTimeout(() => void poll(), intervalRef.current);
+    }
 
     async function poll() {
       try {
@@ -32,28 +42,37 @@ export function useProcessingStatus(
         setData(status);
         setError(null);
 
+        // Reset interval when the status changes
+        if (lastStatusRef.current !== undefined && status.status !== lastStatusRef.current) {
+          intervalRef.current = initialIntervalMs;
+        } else {
+          intervalRef.current = Math.min(intervalRef.current * 2, maxIntervalMs);
+        }
+        lastStatusRef.current = status.status;
+
         const done = status.status === "ready" || status.status === "needs_review" || status.status === "failed";
-        if (done && timerRef.current) {
-          clearInterval(timerRef.current);
-          timerRef.current = null;
+        if (!done) {
+          scheduleNext();
         }
       } catch (err) {
         if (cancelled) return;
         setError(err instanceof Error ? err.message : "Status check failed");
+        // Back off on errors too
+        intervalRef.current = Math.min(intervalRef.current * 2, maxIntervalMs);
+        scheduleNext();
       }
     }
 
     void poll();
-    timerRef.current = setInterval(() => void poll(), intervalMs);
 
     return () => {
       cancelled = true;
       if (timerRef.current) {
-        clearInterval(timerRef.current);
+        clearTimeout(timerRef.current);
         timerRef.current = null;
       }
     };
-  }, [token, meetingId, enabled, intervalMs]);
+  }, [token, meetingId, enabled, initialIntervalMs, maxIntervalMs]);
 
   const status = data?.status;
   return {

@@ -18,14 +18,16 @@ model Organization {
 }
 
 model User {
-  id        String       @id @default(uuid())
-  email     String
-  fullName  String?      @map("full_name")
-  role      String       @default("member")
-  orgId     String       @map("org_id")
-  org       Organization @relation(fields: [orgId], references: [id])
-  createdAt DateTime     @default(now()) @map("created_at")
-  meetings  Meeting[]
+  id           String       @id @default(uuid())
+  email        String       @unique
+  passwordHash String?      @map("password_hash")
+  fullName     String?      @map("full_name")
+  avatarUrl    String?      @map("avatar_url")
+  role         String       @default("member")
+  orgId        String       @map("org_id")
+  org          Organization @relation(fields: [orgId], references: [id])
+  createdAt    DateTime     @default(now()) @map("created_at")
+  meetings     Meeting[]
 
   @@map("users")
 }
@@ -48,6 +50,7 @@ model Meeting {
   uploads         Upload[]
   artifact        MeetingArtifact?
   processingJobs  ProcessingJob[]
+  shares          MeetingShare[]
 
   @@index([orgId])
   @@map("meetings")
@@ -109,4 +112,16 @@ model ProcessingJob {
 
   @@index([meetingId])
   @@map("processing_jobs")
+}
+
+model MeetingShare {
+  id              String   @id @default(uuid())
+  meetingId       String   @map("meeting_id")
+  meeting         Meeting  @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  sharedWithEmail String   @map("shared_with_email")
+  sharedByUserId  String   @map("shared_by_user_id")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  @@unique([meetingId, sharedWithEmail])
+  @@map("meeting_shares")
 }

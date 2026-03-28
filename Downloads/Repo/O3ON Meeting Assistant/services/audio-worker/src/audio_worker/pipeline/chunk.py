@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import math
 from dataclasses import dataclass
 from pathlib import Path
@@ -8,6 +9,8 @@ import subprocess
 
 from audio_worker.models import AudioChunk
 from audio_worker.pipeline.normalize import NormalizedAudioSource
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -27,8 +30,15 @@ class ChunkPlan:
 def _extract_chunk_file(source: Path, destination: Path, start_seconds: float, duration_seconds: float) -> str:
     ffmpeg = shutil.which("ffmpeg")
     destination.parent.mkdir(parents=True, exist_ok=True)
-    if not ffmpeg or not source.exists():
-        return str(source)
+    if not ffmpeg:
+        raise RuntimeError(
+            "ffmpeg not found on PATH. Cannot extract audio chunk. "
+            "Install ffmpeg or ensure it is available in the system PATH."
+        )
+    if not source.exists():
+        raise FileNotFoundError(
+            f"Source audio file does not exist: {source}. Cannot extract chunk."
+        )
 
     command = [
         ffmpeg,
@@ -50,8 +60,11 @@ def _extract_chunk_file(source: Path, destination: Path, start_seconds: float, d
     try:
         subprocess.run(command, check=True, capture_output=True)
         return str(destination)
-    except subprocess.CalledProcessError:
-        return str(source)
+    except subprocess.CalledProcessError as exc:
+        raise RuntimeError(
+            f"ffmpeg failed to extract chunk (start={start_seconds:.3f}s, "
+            f"duration={duration_seconds:.3f}s) from {source}: {exc.stderr!r}"
+        ) from exc
 
 
 def chunk_audio(
@@ -64,6 +77,11 @@ def chunk_audio(
 
     estimated_duration = normalized_source.duration_seconds
     if estimated_duration is None:
+        logger.warning(
+            "Duration unknown for source %s — using full file as a single chunk. "
+            "Transcription quality may suffer for long recordings.",
+            normalized_source.source_id,
+        )
         return (
             AudioChunk(
                 chunk_id=f"{normalized_source.source_id}-chunk-0001",

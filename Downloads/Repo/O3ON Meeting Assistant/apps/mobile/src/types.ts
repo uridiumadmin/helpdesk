@@ -35,6 +35,7 @@ export type Meeting = {
   participants: Participant[];
   summary?: string;
   actionItems?: ActionItem[];
+  createdById?: string;
 };
 
 export type Participant = {
@@ -95,4 +96,27 @@ export type RecordingUploadResult = {
   uploadId: string;
   fileName: string;
   bytesStored: number;
+};
+
+export type MeetingShare = {
+  id: string;
+  meetingId: string;
+  sharedWithEmail: string;
+  sharedByUserId: string;
+  createdAt: string;
+};
+
+export type UserProfile = {
+  id: string;
+  email: string;
+  fullName: string;
+  avatarUrl?: string;
+};
+
+export type AudioFile = {
+  uploadId: string;
+  fileName: string;
+  fileSizeBytes: number;
+  contentType: string;
+  downloadUrl: string;
 };

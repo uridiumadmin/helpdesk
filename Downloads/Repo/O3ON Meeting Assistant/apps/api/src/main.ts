@@ -4,6 +4,7 @@ import { NestFactory } from "@nestjs/core";
 import { NextFunction, Request, Response } from "express";
 import helmet from "helmet";
 import { AppModule } from "./app.module";
+import { requestIdMiddleware } from "./middleware/request-id.middleware";
 
 type RateLimitPolicy = {
   name: string;
@@ -16,14 +17,7 @@ type RateLimitEntry = {
 };
 
 const rateLimitStore = new Map<string, RateLimitEntry>();
-
-function getClientIp(request: Request): string {
-  const forwarded = request.headers["x-forwarded-for"];
-  if (typeof forwarded === "string" && forwarded.trim().length > 0) {
-    return forwarded.split(",")[0]?.trim() || request.ip || request.socket.remoteAddress || "unknown";
-  }
-  return request.ip || request.socket.remoteAddress || "unknown";
-}
+let rateLimitRequestCount = 0;
 
 function pickRateLimitPolicy(request: Request, configService: ConfigService): RateLimitPolicy {
   const path = request.path;
@@ -77,7 +71,7 @@ function buildAllowedOrigins(configService: ConfigService): string[] {
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   const expressApp = app.getHttpAdapter().getInstance();
-  expressApp.set("trust proxy", true);
+  expressApp.set("trust proxy", 1);
 
   const configService = app.get(ConfigService);
   app.setGlobalPrefix("v1");
@@ -110,10 +104,13 @@ async function bootstrap() {
     }
   });
 
+  app.use(requestIdMiddleware);
+
   app.use((request: Request, response: Response, next: NextFunction) => {
     const policy = pickRateLimitPolicy(request, configService);
     const windowMs = configService.get<number>("RATE_LIMIT_WINDOW_MS") ?? 60000;
-    const key = `${policy.name}:${getClientIp(request)}`;
+    const clientIp = request.ip || request.socket.remoteAddress || "unknown";
+    const key = `${policy.name}:${clientIp}`;
     const now = Date.now();
     const current = rateLimitStore.get(key);
 
@@ -140,7 +137,9 @@ async function bootstrap() {
       return;
     }
 
-    if (rateLimitStore.size > 5000) {
+    // Periodic cleanup every 100 requests
+    rateLimitRequestCount += 1;
+    if (rateLimitRequestCount % 100 === 0) {
       for (const [storedKey, storedEntry] of rateLimitStore.entries()) {
         if (storedEntry.resetAt <= now) {
           rateLimitStore.delete(storedKey);

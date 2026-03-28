@@ -1,20 +1,23 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Animated,
   Easing,
+  Linking,
   Pressable,
   SafeAreaView,
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from "react-native";
 import { PrimaryButton } from "../components/PrimaryButton";
 import { useTheme } from "../theme/ThemeContext";
 import { useProcessingStatus } from "../hooks/useProcessingStatus";
 import { api } from "../lib/api";
-import type { Meeting, MeetingArtifact } from "../types";
+import { appConfig } from "../config";
+import type { AudioFile, Meeting, MeetingArtifact, MeetingShare } from "../types";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -133,10 +136,11 @@ function ProcessingSpinner() {
 // MeetingDetailScreen
 // ---------------------------------------------------------------------------
 
-export function MeetingDetailScreen({ meeting, token, onBack }: {
+export function MeetingDetailScreen({ meeting, token, onBack, currentUserId }: {
   meeting: Meeting;
   token: string;
   onBack: () => void;
+  currentUserId: string;
 }) {
   const { colors, isDark } = useTheme();
   const {
@@ -148,6 +152,17 @@ export function MeetingDetailScreen({ meeting, token, onBack }: {
 
   const [artifact, setArtifact] = useState<MeetingArtifact | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+
+  // Sharing state
+  const isOwner = meeting.createdById === currentUserId;
+  const [shares, setShares] = useState<MeetingShare[]>([]);
+  const [shareEmail, setShareEmail] = useState("");
+  const [sharingBusy, setSharingBusy] = useState(false);
+  const [shareError, setShareError] = useState<string | null>(null);
+
+  // Audio state
+  const [audioFiles, setAudioFiles] = useState<AudioFile[]>([]);
+  const [audioLoading, setAudioLoading] = useState(false);
 
   // Fade-in animation
   const fadeIn = useRef(new Animated.Value(0)).current;
@@ -183,6 +198,197 @@ export function MeetingDetailScreen({ meeting, token, onBack }: {
       cancelled = true;
     };
   }, [isReady, token, meeting.id]);
+
+  // Fetch shares (only for owner)
+  const fetchShares = useCallback(async () => {
+    if (!isOwner) return;
+    try {
+      const data = await api.listShares(token, meeting.id);
+      setShares(data);
+    } catch {
+      // silently fail
+    }
+  }, [isOwner, token, meeting.id]);
+
+  useEffect(() => {
+    void fetchShares();
+  }, [fetchShares]);
+
+  // Fetch audio files
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setAudioLoading(true);
+      try {
+        const files = await api.getAudioFiles(token, meeting.id);
+        if (!cancelled) setAudioFiles(files);
+      } catch {
+        // silently fail
+      } finally {
+        if (!cancelled) setAudioLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [token, meeting.id]);
+
+  // Sharing handlers
+  async function handleShareAdd() {
+    const email = shareEmail.trim();
+    if (!email) return;
+    setSharingBusy(true);
+    setShareError(null);
+    try {
+      const share = await api.shareMeeting(token, meeting.id, email);
+      setShares((prev) => [...prev, share]);
+      setShareEmail("");
+    } catch (err) {
+      setShareError(
+        err instanceof Error ? err.message : "Greska pri deljenju",
+      );
+    } finally {
+      setSharingBusy(false);
+    }
+  }
+
+  async function handleShareRevoke(shareId: string) {
+    try {
+      await api.revokeShare(token, meeting.id, shareId);
+      setShares((prev) => prev.filter((s) => s.id !== shareId));
+    } catch {
+      // silently fail
+    }
+  }
+
+  // Export state
+  const [exportBusy, setExportBusy] = useState(false);
+  const [exportToast, setExportToast] = useState(false);
+
+  // Audio playback
+  const [playingId, setPlayingId] = useState<string | null>(null);
+  const [audioUrls, setAudioUrls] = useState<Record<string, string>>({});
+  const audioUrlsRef = useRef<Record<string, string>>({});
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const [currentTimeMs, setCurrentTimeMs] = useState<number>(-1);
+
+  // Cleanup Object URLs and audio on unmount to prevent memory leaks
+  useEffect(() => {
+    return () => {
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current = null;
+      }
+      for (const url of Object.values(audioUrlsRef.current)) {
+        try { URL.revokeObjectURL(url); } catch {}
+      }
+    };
+  }, []);
+
+  async function ensureAudioLoaded(file: AudioFile): Promise<string | null> {
+    let blobUrl = audioUrls[file.uploadId];
+    if (blobUrl) return blobUrl;
+    try {
+      const response = await fetch(
+        `${appConfig.apiBaseUrl}/v1/meetings/${meeting.id}/audio/${file.uploadId}/download`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      if (!response.ok) throw new Error("Download failed");
+      const blob = await response.blob();
+      blobUrl = URL.createObjectURL(blob);
+      audioUrlsRef.current[file.uploadId] = blobUrl;
+      setAudioUrls((prev) => ({ ...prev, [file.uploadId]: blobUrl! }));
+      return blobUrl;
+    } catch {
+      return null;
+    }
+  }
+
+  function createAudioElement(blobUrl: string) {
+    const audio = new window.Audio(blobUrl);
+    audio.onended = () => {
+      setPlayingId(null);
+      setCurrentTimeMs(-1);
+    };
+    audio.ontimeupdate = () => {
+      setCurrentTimeMs(Math.floor(audio.currentTime * 1000));
+    };
+    audioRef.current = audio;
+    return audio;
+  }
+
+  async function handleAudioPlay(file: AudioFile) {
+    if (playingId === file.uploadId) {
+      // Pause current
+      if (audioRef.current) {
+        audioRef.current.pause();
+      }
+      setPlayingId(null);
+      setCurrentTimeMs(-1);
+      return;
+    }
+
+    // Stop previous audio if different file
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current = null;
+    }
+
+    const blobUrl = await ensureAudioLoaded(file);
+    if (!blobUrl) return;
+
+    setPlayingId(file.uploadId);
+
+    if (typeof window !== "undefined") {
+      const audio = createAudioElement(blobUrl);
+      audio.play().catch(() => {
+        setPlayingId(null);
+        setCurrentTimeMs(-1);
+      });
+    }
+  }
+
+  function handleTranscriptSeek(startMs: number) {
+    if (!audioRef.current) return;
+    audioRef.current.currentTime = startMs / 1000;
+    if (audioRef.current.paused) {
+      audioRef.current.play().catch(() => {});
+    }
+  }
+
+  // Export handler
+  async function handleExport() {
+    setExportBusy(true);
+    try {
+      const md = await api.exportMeeting(token, meeting.id);
+      // Try Web Share API first, then fall back to clipboard
+      if (typeof navigator !== "undefined" && navigator.share) {
+        try {
+          await navigator.share({
+            title: meeting.title,
+            text: md,
+          });
+          setExportBusy(false);
+          return;
+        } catch {
+          // share cancelled or unsupported — fall back to clipboard
+        }
+      }
+      if (typeof navigator !== "undefined" && navigator.clipboard) {
+        await navigator.clipboard.writeText(md);
+      }
+      setExportToast(true);
+      setTimeout(() => setExportToast(false), 2000);
+    } catch {
+      // silently fail
+    } finally {
+      setExportBusy(false);
+    }
+  }
+
+  function formatFileSize(bytes: number): string {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  }
 
   // --------------------------------------------------
   // Derived data
@@ -341,7 +547,28 @@ export function MeetingDetailScreen({ meeting, token, onBack }: {
           showsVerticalScrollIndicator={false}
         >
           {/* ---- Header section ---- */}
-          <BackButton />
+          <View style={styles.headerRow}>
+            <BackButton />
+            <View style={styles.headerActions}>
+              {exportToast ? (
+                <View style={[styles.exportToast, { backgroundColor: colors.successBg }]}>
+                  <Text style={[styles.exportToastText, { color: colors.success }]}>
+                    Kopirano!
+                  </Text>
+                </View>
+              ) : (
+                <Pressable
+                  onPress={handleExport}
+                  disabled={exportBusy}
+                  style={[styles.exportBtn, { backgroundColor: colors.brandBg, opacity: exportBusy ? 0.5 : 1 }]}
+                >
+                  <Text style={[styles.exportBtnText, { color: colors.brand }]}>
+                    {exportBusy ? "..." : "Izvezi"}
+                  </Text>
+                </Pressable>
+              )}
+            </View>
+          </View>
 
           <Text style={[styles.title, { color: colors.text }]}>
             {meeting.title}
@@ -437,9 +664,55 @@ export function MeetingDetailScreen({ meeting, token, onBack }: {
 
           {/* ---- Load error ---- */}
           {loadError ? (
-            <Text style={[styles.errorBody, { color: colors.error }]}>
-              {loadError}
-            </Text>
+            <View
+              style={[
+                styles.emptyStateRow,
+                {
+                  backgroundColor: colors.errorBg,
+                  borderColor: colors.error + "30",
+                },
+              ]}
+            >
+              <Text style={[styles.emptyStateIcon, { color: colors.error }]}>
+                !
+              </Text>
+              <Text
+                style={[
+                  styles.errorBody,
+                  { color: colors.error, flex: 1 },
+                ]}
+              >
+                {loadError}
+              </Text>
+              <Pressable
+                onPress={() => {
+                  setLoadError(null);
+                  setArtifact(null);
+                  (async () => {
+                    try {
+                      const result = await api.getArtifacts(token, meeting.id);
+                      setArtifact(result);
+                    } catch (err) {
+                      setLoadError(
+                        err instanceof Error
+                          ? err.message
+                          : "Neuspesno ucitavanje rezultata",
+                      );
+                    }
+                  })();
+                }}
+                style={[
+                  styles.retryBtn,
+                  { backgroundColor: colors.error + "20" },
+                ]}
+              >
+                <Text
+                  style={[styles.retryBtnText, { color: colors.error }]}
+                >
+                  Pokusaj ponovo
+                </Text>
+              </Pressable>
+            </View>
           ) : null}
 
           {/* ---- Loading indicator while fetching artifacts ---- */}
@@ -619,15 +892,30 @@ export function MeetingDetailScreen({ meeting, token, onBack }: {
                       const sColor = speakerColor(
                         seg.speakerLabel,
                       );
+                      const isActive =
+                        playingId !== null &&
+                        currentTimeMs >= seg.startMs &&
+                        currentTimeMs < seg.endMs;
                       return (
-                        <View
+                        <Pressable
                           key={seg.id}
+                          onPress={() => handleTranscriptSeek(seg.startMs)}
                           style={[
                             styles.transcriptRow,
                             {
                               borderBottomColor:
                                 colors.separator,
                             },
+                            isActive
+                              ? {
+                                  borderLeftWidth: 3,
+                                  borderLeftColor: "#D4A017",
+                                  backgroundColor: isDark
+                                    ? "rgba(212, 160, 23, 0.08)"
+                                    : "rgba(212, 160, 23, 0.06)",
+                                  paddingLeft: 12,
+                                }
+                              : null,
                           ]}
                         >
                           <View style={styles.transcriptHeader}>
@@ -700,13 +988,43 @@ export function MeetingDetailScreen({ meeting, token, onBack }: {
                           >
                             {seg.text}
                           </Text>
-                        </View>
+                        </Pressable>
                       );
                     })}
                   </Card>
                   <SectionDivider />
                 </>
-              ) : null}
+              ) : (
+                <>
+                  <View
+                    style={[
+                      styles.emptyStateRow,
+                      {
+                        backgroundColor: colors.bgCard,
+                        borderColor: colors.border,
+                      },
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.emptyStateIcon,
+                        { color: colors.textDim },
+                      ]}
+                    >
+                      i
+                    </Text>
+                    <Text
+                      style={[
+                        styles.emptyStateText,
+                        { color: colors.textDim },
+                      ]}
+                    >
+                      Transkript jos nije dostupan.
+                    </Text>
+                  </View>
+                  <SectionDivider />
+                </>
+              )}
 
               {/* Decisions card */}
               {artifact.decisions.length > 0 ? (
@@ -905,6 +1223,248 @@ export function MeetingDetailScreen({ meeting, token, onBack }: {
             </>
           ) : null}
 
+          {/* ---- Audio section ---- */}
+          {audioFiles.length > 0 ? (
+            <>
+              <SectionDivider />
+              <Card>
+                <Text
+                  style={[styles.sectionTitle, { color: colors.text }]}
+                >
+                  Audio snimci
+                </Text>
+                {audioFiles.map((file) => (
+                  <View
+                    key={file.uploadId}
+                    style={[
+                      styles.audioRow,
+                      { borderBottomColor: colors.separator },
+                    ]}
+                  >
+                    <View style={styles.audioInfo}>
+                      <Text
+                        style={[
+                          styles.audioFileName,
+                          { color: colors.text },
+                        ]}
+                        numberOfLines={1}
+                      >
+                        {file.fileName}
+                      </Text>
+                      <Text
+                        style={[
+                          styles.audioFileSize,
+                          { color: colors.textDim },
+                        ]}
+                      >
+                        {formatFileSize(file.fileSizeBytes)}
+                      </Text>
+                    </View>
+                    <Pressable
+                      onPress={() => handleAudioPlay(file)}
+                      style={[
+                        styles.audioBtn,
+                        {
+                          backgroundColor:
+                            playingId === file.uploadId
+                              ? colors.recordingBg
+                              : colors.brandBg,
+                        },
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.audioBtnText,
+                          {
+                            color:
+                              playingId === file.uploadId
+                                ? colors.recording
+                                : colors.brand,
+                          },
+                        ]}
+                      >
+                        {playingId === file.uploadId ? "Zaustavi" : "Pusti"}
+                      </Text>
+                    </Pressable>
+                  </View>
+                ))}
+              </Card>
+            </>
+          ) : audioLoading ? (
+            <>
+              <SectionDivider />
+              <View style={styles.loadingRow}>
+                <ActivityIndicator color={colors.brand} size="small" />
+                <Text
+                  style={[styles.loadingText, { color: colors.textMuted }]}
+                >
+                  Ucitavanje audio snimaka...
+                </Text>
+              </View>
+            </>
+          ) : (
+            <>
+              <SectionDivider />
+              <View
+                style={[
+                  styles.emptyStateRow,
+                  {
+                    backgroundColor: colors.bgCard,
+                    borderColor: colors.border,
+                  },
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.emptyStateIcon,
+                    { color: colors.textDim },
+                  ]}
+                >
+                  i
+                </Text>
+                <Text
+                  style={[
+                    styles.emptyStateText,
+                    { color: colors.textDim },
+                  ]}
+                >
+                  Nema audio fajlova.
+                </Text>
+              </View>
+            </>
+          )}
+
+          {/* ---- Sharing section (owner only) ---- */}
+          {isOwner ? (
+            <>
+              <SectionDivider />
+              <Card>
+                <Text
+                  style={[styles.sectionTitle, { color: colors.text }]}
+                >
+                  Podeli sastanak
+                </Text>
+
+                {/* Current shares */}
+                {shares.length > 0 ? (
+                  shares.map((share) => (
+                    <View
+                      key={share.id}
+                      style={[
+                        styles.shareRow,
+                        { borderBottomColor: colors.separator },
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.shareEmail,
+                          { color: colors.textMuted },
+                        ]}
+                        numberOfLines={1}
+                      >
+                        {share.sharedWithEmail}
+                      </Text>
+                      <Pressable
+                        onPress={() => handleShareRevoke(share.id)}
+                        style={[
+                          styles.revokeBtn,
+                          { backgroundColor: colors.errorBg },
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            styles.revokeBtnText,
+                            { color: colors.error },
+                          ]}
+                        >
+                          Opozovi
+                        </Text>
+                      </Pressable>
+                    </View>
+                  ))
+                ) : (
+                  <View
+                    style={[
+                      styles.emptyStateInline,
+                      {
+                        backgroundColor: colors.bgCard,
+                        borderColor: colors.border,
+                      },
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.emptyStateIcon,
+                        { color: colors.textDim },
+                      ]}
+                    >
+                      i
+                    </Text>
+                    <Text
+                      style={[
+                        styles.emptyStateText,
+                        { color: colors.textDim },
+                      ]}
+                    >
+                      Ovaj sastanak nije deljen.
+                    </Text>
+                  </View>
+                )}
+
+                {/* Add new share */}
+                <View style={styles.shareAddRow}>
+                  <TextInput
+                    style={[
+                      styles.shareInput,
+                      {
+                        backgroundColor: colors.bgInput,
+                        borderColor: colors.borderLight,
+                        color: colors.text,
+                      },
+                    ]}
+                    placeholder="Email adresa"
+                    placeholderTextColor={colors.textDim}
+                    value={shareEmail}
+                    onChangeText={(v) => {
+                      setShareEmail(v);
+                      setShareError(null);
+                    }}
+                    keyboardType="email-address"
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                  />
+                  <Pressable
+                    onPress={handleShareAdd}
+                    disabled={sharingBusy || !shareEmail.trim()}
+                    style={[
+                      styles.shareAddBtn,
+                      {
+                        backgroundColor: colors.brand,
+                        opacity:
+                          sharingBusy || !shareEmail.trim() ? 0.5 : 1,
+                      },
+                    ]}
+                  >
+                    <Text style={styles.shareAddBtnText}>
+                      {sharingBusy ? "..." : "Dodaj"}
+                    </Text>
+                  </Pressable>
+                </View>
+
+                {shareError ? (
+                  <Text
+                    style={[
+                      styles.shareError,
+                      { color: colors.error },
+                    ]}
+                  >
+                    {shareError}
+                  </Text>
+                ) : null}
+              </Card>
+            </>
+          ) : null}
+
           {/* Bottom back button */}
           {artifact || isFailed || loadError ? (
             <PrimaryButton
@@ -945,6 +1505,36 @@ const styles = StyleSheet.create({
     height: 48,
     borderRadius: 24,
     borderWidth: 4,
+  },
+
+  // Header row
+  headerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  headerActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  exportBtn: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 10,
+  },
+  exportBtnText: {
+    fontSize: 13,
+    fontWeight: "700",
+  },
+  exportToast: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 10,
+  },
+  exportToastText: {
+    fontSize: 13,
+    fontWeight: "700",
   },
 
   // Back button
@@ -1266,5 +1856,136 @@ const styles = StyleSheet.create({
   loadingText: {
     fontSize: 14,
     fontWeight: "500",
+  },
+
+  // Audio section
+  audioRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    gap: 10,
+  },
+  audioInfo: {
+    flex: 1,
+    gap: 2,
+  },
+  audioFileName: {
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  audioFileSize: {
+    fontSize: 12,
+  },
+  audioBtn: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 10,
+  },
+  audioBtnText: {
+    fontSize: 13,
+    fontWeight: "700",
+  },
+
+  // Sharing section
+  shareRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    gap: 10,
+  },
+  shareEmail: {
+    fontSize: 14,
+    flex: 1,
+  },
+  revokeBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 10,
+  },
+  revokeBtnText: {
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  shareEmpty: {
+    fontSize: 14,
+    fontStyle: "italic",
+    paddingVertical: 8,
+  },
+  shareAddRow: {
+    flexDirection: "row",
+    gap: 8,
+    marginTop: 4,
+  },
+  shareInput: {
+    flex: 1,
+    borderRadius: 12,
+    borderWidth: 1,
+    fontSize: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  shareAddBtn: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  shareAddBtnText: {
+    color: "#FFFFFF",
+    fontSize: 14,
+    fontWeight: "700",
+  },
+  shareError: {
+    fontSize: 13,
+    lineHeight: 18,
+  },
+
+  // Empty states
+  emptyStateRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    borderRadius: 14,
+    borderWidth: 1,
+    padding: 14,
+  },
+  emptyStateInline: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingVertical: 8,
+  },
+  emptyStateIcon: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    textAlign: "center",
+    lineHeight: 22,
+    fontSize: 13,
+    fontWeight: "800",
+    fontStyle: "italic",
+    overflow: "hidden",
+    backgroundColor: "rgba(128,128,128,0.12)",
+  },
+  emptyStateText: {
+    fontSize: 14,
+    fontStyle: "italic",
+    flex: 1,
+  },
+
+  // Retry button (for load errors)
+  retryBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 10,
+  },
+  retryBtnText: {
+    fontSize: 12,
+    fontWeight: "700",
   },
 });

@@ -1,18 +1,20 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  Alert,
   Animated,
   Easing,
   FlatList,
   Pressable,
   RefreshControl,
   SafeAreaView,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from "react-native";
 import { PrimaryButton } from "../components/PrimaryButton";
-import { useTheme, ThemeMode } from "../theme/ThemeContext";
+import { useTheme } from "../theme/ThemeContext";
 import { api } from "../lib/api";
 import type { Meeting, MeetingStatus } from "../types";
 
@@ -26,6 +28,7 @@ type Props = {
   onRecord: (meeting: Meeting) => void;
   onOpenMeeting: (meeting: Meeting) => void;
   onSignOut: () => void;
+  onProfile: () => void;
 };
 
 // ---------------------------------------------------------------------------
@@ -33,6 +36,14 @@ type Props = {
 // ---------------------------------------------------------------------------
 
 const DURATIONS = [15, 30, 45, 60, 90] as const;
+
+type StatusFilter = "all" | "processing" | "ready";
+
+const STATUS_FILTERS: { key: StatusFilter; label: string }[] = [
+  { key: "all", label: "Svi" },
+  { key: "processing", label: "Obrada" },
+  { key: "ready", label: "Zavrseni" },
+];
 
 function formatDate(iso: string): string {
   const d = new Date(iso);
@@ -57,12 +68,6 @@ function userInitial(name: string): string {
   return (name.charAt(0) || "?").toUpperCase();
 }
 
-const THEME_CYCLE: ThemeMode[] = ["auto", "dark", "light"];
-const THEME_LABELS: Record<ThemeMode, string> = {
-  auto: "Auto",
-  dark: "Dark",
-  light: "Light",
-};
 
 // ---------------------------------------------------------------------------
 // Status badge colors - derived from theme
@@ -252,13 +257,18 @@ export function MeetingsScreen({
   onRecord,
   onOpenMeeting,
   onSignOut,
+  onProfile,
 }: Props) {
-  const { colors, isDark, mode, setMode } = useTheme();
+  const { colors, isDark } = useTheme();
 
   // Data
   const [meetings, setMeetings] = useState<Meeting[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+
+  // Search & filter
+  const [searchQuery, setSearchQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
 
   // Create form
   const [formOpen, setFormOpen] = useState(false);
@@ -324,13 +334,49 @@ export function MeetingsScreen({
   }, [fetchMeetings]);
 
   // --------------------------------------------------
-  // Theme toggle
+  // Filtered meetings (search + status)
   // --------------------------------------------------
 
-  function cycleTheme() {
-    const currentIndex = THEME_CYCLE.indexOf(mode);
-    const next = THEME_CYCLE[(currentIndex + 1) % THEME_CYCLE.length];
-    setMode(next);
+  const filteredMeetings = meetings.filter((m) => {
+    // Title search (case-insensitive)
+    if (searchQuery.trim()) {
+      const q = searchQuery.trim().toLowerCase();
+      if (!m.title.toLowerCase().includes(q)) return false;
+    }
+    // Status filter
+    if (statusFilter === "processing") {
+      return m.status === "processing" || m.status === "recording" || m.status === "draft";
+    }
+    if (statusFilter === "ready") {
+      return m.status === "ready" || m.status === "needs_review" || m.status === "failed";
+    }
+    return true;
+  });
+
+  // --------------------------------------------------
+  // Delete meeting
+  // --------------------------------------------------
+
+  function handleDeleteMeeting(meeting: Meeting) {
+    Alert.alert(
+      "Brisanje sastanka",
+      `Da li ste sigurni da zelite da obrisete ovaj sastanak?\n\n"${meeting.title}"`,
+      [
+        { text: "Odustani", style: "cancel" },
+        {
+          text: "Obrisi",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              await api.deleteMeeting(token, meeting.id);
+              setMeetings((prev) => prev.filter((m) => m.id !== meeting.id));
+            } catch {
+              Alert.alert("Greska", "Brisanje sastanka nije uspelo.");
+            }
+          },
+        },
+      ],
+    );
   }
 
   // --------------------------------------------------
@@ -410,33 +456,16 @@ export function MeetingsScreen({
           </Text>
         </View>
         <View style={styles.headerRight}>
-          {/* Theme toggle */}
+          {/* User avatar — tap to open profile */}
           <Pressable
-            onPress={cycleTheme}
+            onPress={onProfile}
             hitSlop={8}
-            style={[
-              styles.themeToggle,
-              {
-                backgroundColor: isDark
-                  ? "rgba(255,255,255,0.08)"
-                  : "rgba(0,0,0,0.06)",
-                borderColor: colors.border,
-              },
-            ]}
-          >
-            <Text style={[styles.themeToggleText, { color: colors.textMuted }]}>
-              {THEME_LABELS[mode]}
-            </Text>
-          </Pressable>
-
-          {/* User avatar */}
-          <View
             style={[styles.avatar, { backgroundColor: colors.brandBg }]}
           >
             <Text style={[styles.avatarText, { color: colors.brand }]}>
               {userInitial(user.fullName)}
             </Text>
-          </View>
+          </Pressable>
 
           {/* Sign out */}
           <Pressable onPress={onSignOut} hitSlop={8}>
@@ -459,6 +488,77 @@ export function MeetingsScreen({
         }}
         variant="brand"
       />
+    );
+  }
+
+  function renderSearchAndFilter() {
+    return (
+      <View style={styles.searchFilterContainer}>
+        {/* Search bar */}
+        <View
+          style={[
+            styles.searchBar,
+            {
+              backgroundColor: colors.bgInput,
+              borderColor: colors.borderLight,
+            },
+          ]}
+        >
+          <Text style={[styles.searchIcon, { color: colors.textDim }]}>
+            {"\u{1F50D}"}
+          </Text>
+          <TextInput
+            style={[styles.searchInput, { color: colors.text }]}
+            placeholder="Pretrazi sastanke..."
+            placeholderTextColor={colors.textDim}
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            autoCorrect={false}
+          />
+          {searchQuery.length > 0 && (
+            <Pressable onPress={() => setSearchQuery("")} hitSlop={8}>
+              <Text style={[styles.searchClear, { color: colors.textMuted }]}>
+                {"\u2715"}
+              </Text>
+            </Pressable>
+          )}
+        </View>
+
+        {/* Status filter chips */}
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.filterChipsRow}
+        >
+          {STATUS_FILTERS.map((f) => {
+            const active = f.key === statusFilter;
+            return (
+              <Pressable
+                key={f.key}
+                onPress={() => setStatusFilter(f.key)}
+                style={[
+                  styles.filterChip,
+                  {
+                    backgroundColor: active ? colors.accent : colors.bgInput,
+                    borderColor: active ? colors.accent : colors.borderLight,
+                  },
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.filterChipText,
+                    {
+                      color: active ? "#FFFFFF" : colors.textMuted,
+                    },
+                  ]}
+                >
+                  {f.label}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </ScrollView>
+      </View>
     );
   }
 
@@ -618,6 +718,18 @@ export function MeetingsScreen({
           <View style={styles.badgeRow}>
             {isProcessing && <SpinningIndicator color={badgeColor} />}
             <PulsingBadge config={badgeConfig} bg={badgeBg} color={badgeColor} />
+            <Pressable
+              onPress={(e) => {
+                e.stopPropagation?.();
+                handleDeleteMeeting(meeting);
+              }}
+              hitSlop={8}
+              style={styles.deleteButton}
+            >
+              <Text style={[styles.deleteIcon, { color: colors.textMuted }]}>
+                {"\u{1F5D1}"}
+              </Text>
+            </Pressable>
           </View>
         </View>
 
@@ -706,7 +818,7 @@ export function MeetingsScreen({
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.bg }]}>
       <FlatList
-        data={meetings}
+        data={filteredMeetings}
         keyExtractor={(m) => m.id}
         renderItem={renderMeetingCard}
         contentContainerStyle={styles.listContent}
@@ -715,6 +827,7 @@ export function MeetingsScreen({
             {renderHeader()}
             {renderNewMeetingButton()}
             {renderCreateForm()}
+            {renderSearchAndFilter()}
           </>
         }
         ListEmptyComponent={renderEmpty}
@@ -763,17 +876,6 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
-  },
-  themeToggle: {
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 10,
-    borderWidth: 1,
-  },
-  themeToggleText: {
-    fontSize: 11,
-    fontWeight: "700",
-    letterSpacing: 0.3,
   },
   avatar: {
     width: 36,
@@ -839,6 +941,58 @@ const styles = StyleSheet.create({
   error: {
     fontSize: 13,
     lineHeight: 18,
+  },
+
+  // Search & filter
+  searchFilterContainer: {
+    marginTop: 14,
+    marginBottom: 4,
+    gap: 10,
+  },
+  searchBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    borderRadius: 12,
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    height: 44,
+    gap: 8,
+  },
+  searchIcon: {
+    fontSize: 16,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: 15,
+    paddingVertical: 0,
+  },
+  searchClear: {
+    fontSize: 16,
+    fontWeight: "600",
+    padding: 4,
+  },
+  filterChipsRow: {
+    flexDirection: "row",
+    gap: 8,
+    paddingVertical: 2,
+  },
+  filterChip: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+    borderWidth: 1,
+  },
+  filterChipText: {
+    fontSize: 13,
+    fontWeight: "700",
+  },
+
+  // Delete button on card
+  deleteButton: {
+    padding: 4,
+  },
+  deleteIcon: {
+    fontSize: 16,
   },
 
   // Cards

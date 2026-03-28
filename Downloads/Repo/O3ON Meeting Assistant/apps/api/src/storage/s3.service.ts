@@ -24,13 +24,17 @@ export class S3Service implements OnModuleInit {
       return;
     }
 
+    const accessKeyId = this.config.get<string>("S3_ACCESS_KEY");
+    const secretAccessKey = this.config.get<string>("S3_SECRET_KEY");
+    if (!accessKeyId || !secretAccessKey) {
+      this.logger.error("S3_ENDPOINT is set but S3_ACCESS_KEY / S3_SECRET_KEY are missing. S3 storage disabled.");
+      return;
+    }
+
     this.client = new S3Client({
       endpoint,
       region: this.config.get<string>("S3_REGION") ?? "eu-central-1",
-      credentials: {
-        accessKeyId: this.config.get<string>("S3_ACCESS_KEY") ?? "minioadmin",
-        secretAccessKey: this.config.get<string>("S3_SECRET_KEY") ?? "minioadmin",
-      },
+      credentials: { accessKeyId, secretAccessKey },
       forcePathStyle: true,
     });
   }

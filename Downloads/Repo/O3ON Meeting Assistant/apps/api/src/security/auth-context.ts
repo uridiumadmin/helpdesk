@@ -5,4 +5,5 @@ export interface AuthContext {
   email: string;
   orgId: string;
   role: Role;
+  exp?: number;
 }

@@ -2,16 +2,21 @@ import {
   BadRequestException,
   Body,
   Controller,
+  Delete,
   Get,
+  HttpCode,
   Param,
   ParseFilePipeBuilder,
   Post,
   Put,
+  Res,
   UploadedFile,
   UseInterceptors
 } from "@nestjs/common";
 import { FileInterceptor } from "@nestjs/platform-express";
 import { ActionItem } from "@o3on/contracts";
+import { Response } from "express";
+import { createReadStream, existsSync } from "node:fs";
 import { CurrentAuth } from "../security/auth-context.decorator";
 import { AuthContext } from "../security/auth-context";
 import { AddParticipantDto } from "./dto/add-participant.dto";
@@ -19,6 +24,8 @@ import { CompleteUploadDto } from "./dto/complete-upload.dto";
 import { CreateMeetingDto } from "./dto/create-meeting.dto";
 import { CreateUploadSessionDto } from "./dto/create-upload-session.dto";
 import { ProcessMeetingDto } from "./dto/process-meeting.dto";
+import { ShareMeetingDto } from "./dto/share-meeting.dto";
+import { UpdateMeetingDto } from "./dto/update-meeting.dto";
 import { MeetingsService } from "./meetings.service";
 
 @Controller("meetings")
@@ -33,6 +40,15 @@ export class MeetingsController {
   @Post()
   createMeeting(@CurrentAuth() auth: AuthContext, @Body() dto: CreateMeetingDto) {
     return this.meetingsService.createMeeting(auth, dto);
+  }
+
+  @Put(":meetingId")
+  updateMeeting(
+    @CurrentAuth() auth: AuthContext,
+    @Param("meetingId") meetingId: string,
+    @Body() dto: UpdateMeetingDto
+  ) {
+    return this.meetingsService.updateMeeting(auth, meetingId, dto);
   }
 
   @Post(":meetingId/recording/start")
@@ -128,6 +144,21 @@ export class MeetingsController {
     return this.meetingsService.getArtifacts(auth, meetingId);
   }
 
+  @Get(":meetingId/export")
+  async exportMeeting(
+    @CurrentAuth() auth: AuthContext,
+    @Param("meetingId") meetingId: string,
+    @Res() res: Response
+  ) {
+    const { title, markdown } = await this.meetingsService.exportMeeting(auth, meetingId);
+    const safeTitle = title.replace(/[^a-zA-Z0-9_\-\s]/g, "").trim().replace(/\s+/g, "_");
+    res.set({
+      "Content-Type": "text/markdown; charset=utf-8",
+      "Content-Disposition": `attachment; filename="${safeTitle || "meeting"}.md"`,
+    });
+    res.send(markdown);
+  }
+
   @Put(":meetingId/action-items")
   saveActionItems(
     @CurrentAuth() auth: AuthContext,
@@ -135,5 +166,83 @@ export class MeetingsController {
     @Body("items") items: ActionItem[]
   ) {
     return this.meetingsService.saveActionItems(auth, meetingId, items);
+  }
+
+  /* ---------- Delete ---------- */
+
+  @Delete(":meetingId")
+  @HttpCode(200)
+  deleteMeeting(
+    @CurrentAuth() auth: AuthContext,
+    @Param("meetingId") meetingId: string
+  ) {
+    return this.meetingsService.deleteMeeting(auth, meetingId);
+  }
+
+  /* ---------- Sharing ---------- */
+
+  @Post(":meetingId/shares")
+  shareMeeting(
+    @CurrentAuth() auth: AuthContext,
+    @Param("meetingId") meetingId: string,
+    @Body() dto: ShareMeetingDto
+  ) {
+    return this.meetingsService.shareMeeting(auth, meetingId, dto.email);
+  }
+
+  @Get(":meetingId/shares")
+  listShares(
+    @CurrentAuth() auth: AuthContext,
+    @Param("meetingId") meetingId: string
+  ) {
+    return this.meetingsService.listShares(auth, meetingId);
+  }
+
+  @Delete(":meetingId/shares/:shareId")
+  @HttpCode(200)
+  revokeShare(
+    @CurrentAuth() auth: AuthContext,
+    @Param("meetingId") meetingId: string,
+    @Param("shareId") shareId: string
+  ) {
+    return this.meetingsService.revokeShare(auth, meetingId, shareId);
+  }
+
+  /* ---------- Audio ---------- */
+
+  @Get(":meetingId/audio")
+  getAudioFiles(
+    @CurrentAuth() auth: AuthContext,
+    @Param("meetingId") meetingId: string
+  ) {
+    return this.meetingsService.getAudioFiles(auth, meetingId);
+  }
+
+  @Get(":meetingId/audio/:uploadId/download")
+  async downloadAudio(
+    @CurrentAuth() auth: AuthContext,
+    @Param("meetingId") meetingId: string,
+    @Param("uploadId") uploadId: string,
+    @Res() res: Response
+  ) {
+    const info = await this.meetingsService.getAudioDownloadInfo(auth, meetingId, uploadId);
+
+    if (info.type === "s3" && info.filePath) {
+      // Redirect to S3 presigned URL
+      return res.redirect(info.filePath);
+    }
+
+    // Stream local file
+    if (!info.filePath || !existsSync(info.filePath)) {
+      return res.status(404).json({ message: "Audio file not found on disk." });
+    }
+
+    res.set({
+      "Content-Type": info.contentType,
+      "Content-Disposition": `attachment; filename="${info.fileName}"`,
+    });
+
+    const stream = createReadStream(info.filePath);
+    stream.pipe(res);
   }
 }

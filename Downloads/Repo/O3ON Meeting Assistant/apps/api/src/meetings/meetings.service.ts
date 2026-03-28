@@ -1,10 +1,11 @@
-import { ConflictException, Injectable, Logger, NotFoundException, OnModuleInit } from "@nestjs/common";
+import { ConflictException, ForbiddenException, Injectable, Logger, NotFoundException, OnModuleInit, ServiceUnavailableException } from "@nestjs/common";
 import { ActionItem, Meeting, MeetingArtifact as ContractArtifact, Participant } from "@o3on/contracts";
 import { v7 as uuidv7 } from "uuid";
 import { AuthContext } from "../security/auth-context";
 import { AddParticipantDto } from "./dto/add-participant.dto";
 import { CreateMeetingDto } from "./dto/create-meeting.dto";
 import { CreateUploadSessionDto } from "./dto/create-upload-session.dto";
+import { UpdateMeetingDto } from "./dto/update-meeting.dto";
 import { UploadStorageService } from "./upload-storage.service";
 import { WorkerClient } from "./worker-client";
 import { WorkerProcessingResult } from "./worker-types";
@@ -54,9 +55,49 @@ export class MeetingsService implements OnModuleInit {
     }
   }
 
+  /** Ensure Organization and User records exist for this auth context (auto-provisioning). */
+  private async ensureUserExists(auth: AuthContext): Promise<void> {
+    if (!this.usePrisma) return;
+    try {
+      await this.prisma.organization.upsert({
+        where: { id: auth.orgId },
+        create: { id: auth.orgId, name: "O3ON" },
+        update: {},
+      });
+      await this.prisma.user.upsert({
+        where: { id: auth.userId },
+        create: {
+          id: auth.userId,
+          email: auth.email,
+          fullName: auth.email.split("@")[0].replace(/[._-]/g, " "),
+          role: auth.role,
+          orgId: auth.orgId,
+        },
+        update: { email: auth.email, role: auth.role },
+      });
+    } catch (error) {
+      this.logger.warn(`Auto-provisioning user failed: ${error}`);
+    }
+  }
+
+  /** When usePrisma is true, rethrow known HTTP exceptions or throw ServiceUnavailableException. */
+  private rethrowOrUnavailable(context: string, error: unknown): never {
+    if (
+      error instanceof NotFoundException ||
+      error instanceof ForbiddenException ||
+      error instanceof ConflictException ||
+      error instanceof ServiceUnavailableException
+    ) {
+      throw error;
+    }
+    this.logger.error(`${context}: ${error}`);
+    throw new ServiceUnavailableException("Baza podataka trenutno nije dostupna. Pokušajte ponovo.");
+  }
+
   async createMeeting(auth: AuthContext, dto: CreateMeetingDto): Promise<Meeting> {
     if (this.usePrisma) {
       try {
+        await this.ensureUserExists(auth);
         const meeting = await this.prisma.meeting.create({
           data: {
             id: uuidv7(),
@@ -79,24 +120,74 @@ export class MeetingsService implements OnModuleInit {
         });
         return this.prismaToMeetingResponse(meeting);
       } catch (error) {
-        this.logger.error(`Prisma createMeeting failed, falling back to Map: ${error}`);
+        this.rethrowOrUnavailable("createMeeting", error);
       }
     }
 
     return this.createMeetingInMemory(auth, dto);
   }
 
+  async updateMeeting(auth: AuthContext, meetingId: string, dto: UpdateMeetingDto): Promise<Meeting> {
+    if (this.usePrisma) {
+      try {
+        const meeting = await this.prisma.meeting.findFirst({
+          where: { id: meetingId, orgId: auth.orgId, createdById: auth.userId },
+        });
+        if (!meeting) {
+          throw new NotFoundException(`Meeting ${meetingId} was not found.`);
+        }
+        if (meeting.createdById !== auth.userId) {
+          throw new ForbiddenException("Only the meeting owner can edit meetings.");
+        }
+
+        const data: Record<string, unknown> = {};
+        if (dto.title !== undefined) data.title = dto.title;
+        if (dto.startsAt !== undefined) data.startsAt = new Date(dto.startsAt);
+        if (dto.durationMinutes !== undefined) data.durationMinutes = dto.durationMinutes;
+
+        const updated = await this.prisma.meeting.update({
+          where: { id: meetingId },
+          data,
+          include: { participants: true, artifact: true },
+        });
+        return this.prismaToMeetingResponse(updated);
+      } catch (error) {
+        this.rethrowOrUnavailable("updateMeeting", error);
+      }
+    }
+
+    // In-memory fallback
+    const meeting = this.meetings.get(meetingId);
+    if (!meeting || meeting.orgId !== auth.orgId) {
+      throw new NotFoundException(`Meeting ${meetingId} was not found.`);
+    }
+    if (meeting.createdBy !== auth.userId) {
+      throw new ForbiddenException("Only the meeting owner can edit meetings.");
+    }
+
+    if (dto.title !== undefined) meeting.title = dto.title;
+    if (dto.startsAt !== undefined) meeting.startsAt = dto.startsAt;
+    if (dto.durationMinutes !== undefined) meeting.durationMinutes = dto.durationMinutes;
+
+    return this.toMeetingResponse(meeting);
+  }
+
   async listMeetings(auth: AuthContext): Promise<Meeting[]> {
     if (this.usePrisma) {
       try {
         const meetings = await this.prisma.meeting.findMany({
-          where: { orgId: auth.orgId },
-          include: { participants: true, artifact: true },
+          where: {
+            OR: [
+              { orgId: auth.orgId, createdById: auth.userId },
+              { shares: { some: { sharedWithEmail: auth.email } } },
+            ],
+          },
+          include: { participants: true, artifact: true, shares: true },
           orderBy: { createdAt: "desc" },
         });
         return meetings.map((m) => this.prismaToMeetingResponse(m));
       } catch (error) {
-        this.logger.error(`Prisma listMeetings failed, falling back to Map: ${error}`);
+        if (this.usePrisma) this.rethrowOrUnavailable("listMeetings", error);
       }
     }
 
@@ -109,7 +200,7 @@ export class MeetingsService implements OnModuleInit {
   async addParticipant(auth: AuthContext, meetingId: string, dto: AddParticipantDto): Promise<Participant> {
     if (this.usePrisma) {
       try {
-        await this.getPrismaMeetingForOrg(auth.orgId, meetingId);
+        await this.getPrismaMeetingForOrg(auth.orgId, meetingId, auth.email);
         const participant = await this.prisma.participant.create({
           data: {
             id: uuidv7(),
@@ -127,8 +218,7 @@ export class MeetingsService implements OnModuleInit {
           enrollmentStatus: participant.enrollmentStatus as "pending" | "enrolled" | "needs_retry",
         };
       } catch (error) {
-        if (error instanceof NotFoundException) throw error;
-        this.logger.error(`Prisma addParticipant failed, falling back to Map: ${error}`);
+        this.rethrowOrUnavailable("addParticipant", error);
       }
     }
 
@@ -147,7 +237,7 @@ export class MeetingsService implements OnModuleInit {
   async enrollParticipant(auth: AuthContext, meetingId: string, participantId: string) {
     if (this.usePrisma) {
       try {
-        await this.getPrismaMeetingForOrg(auth.orgId, meetingId);
+        await this.getPrismaMeetingForOrg(auth.orgId, meetingId, auth.email);
         const participant = await this.prisma.participant.findFirst({
           where: { id: participantId, meetingId },
         });
@@ -170,8 +260,7 @@ export class MeetingsService implements OnModuleInit {
           enrolledAt: new Date().toISOString(),
         };
       } catch (error) {
-        if (error instanceof NotFoundException) throw error;
-        this.logger.error(`Prisma enrollParticipant failed, falling back to Map: ${error}`);
+        this.rethrowOrUnavailable("enrollParticipant", error);
       }
     }
 
@@ -196,7 +285,7 @@ export class MeetingsService implements OnModuleInit {
 
     if (this.usePrisma) {
       try {
-        await this.getPrismaMeetingForOrg(auth.orgId, meetingId);
+        await this.getPrismaMeetingForOrg(auth.orgId, meetingId, auth.email);
         await this.prisma.upload.create({
           data: {
             id: uploadId,
@@ -207,7 +296,7 @@ export class MeetingsService implements OnModuleInit {
         });
       } catch (error) {
         if (error instanceof NotFoundException) throw error;
-        this.logger.error(`Prisma createUploadSession failed, falling back to Map: ${error}`);
+        this.rethrowOrUnavailable("createUploadSession", error);
         const meeting = this.getMeetingForOrg(auth.orgId, meetingId);
         meeting.upload = { id: uploadId, objectKey, expectedParts };
       }
@@ -257,7 +346,7 @@ export class MeetingsService implements OnModuleInit {
   ) {
     if (this.usePrisma) {
       try {
-        await this.getPrismaMeetingForOrg(auth.orgId, meetingId);
+        await this.getPrismaMeetingForOrg(auth.orgId, meetingId, auth.email);
         const upload = await this.prisma.upload.findFirst({
           where: { id: uploadId, meetingId },
         });
@@ -315,7 +404,7 @@ export class MeetingsService implements OnModuleInit {
         };
       } catch (error) {
         if (error instanceof NotFoundException) throw error;
-        this.logger.error(`Prisma uploadMeetingFile failed, falling back to Map: ${error}`);
+        this.rethrowOrUnavailable("uploadMeetingFile", error);
       }
     }
 
@@ -369,7 +458,7 @@ export class MeetingsService implements OnModuleInit {
   ) {
     if (this.usePrisma) {
       try {
-        await this.getPrismaMeetingForOrg(auth.orgId, meetingId);
+        await this.getPrismaMeetingForOrg(auth.orgId, meetingId, auth.email);
         const upload = await this.prisma.upload.findFirst({
           where: { id: uploadId, meetingId },
         });
@@ -402,7 +491,7 @@ export class MeetingsService implements OnModuleInit {
         };
       } catch (error) {
         if (error instanceof NotFoundException) throw error;
-        this.logger.error(`Prisma completeUpload failed, falling back to Map: ${error}`);
+        this.rethrowOrUnavailable("completeUpload", error);
       }
     }
 
@@ -433,7 +522,7 @@ export class MeetingsService implements OnModuleInit {
   async queueProcessing(auth: AuthContext, meetingId: string, force = false) {
     if (this.usePrisma) {
       try {
-        const meeting = await this.getPrismaMeetingForOrg(auth.orgId, meetingId);
+        const meeting = await this.getPrismaMeetingForOrg(auth.orgId, meetingId, auth.email);
         if (meeting.status === "processing" && !force) {
           return { meetingId, status: "processing", accepted: false };
         }
@@ -458,7 +547,7 @@ export class MeetingsService implements OnModuleInit {
         };
       } catch (error) {
         if (error instanceof NotFoundException) throw error;
-        this.logger.error(`Prisma queueProcessing failed, falling back to Map: ${error}`);
+        this.rethrowOrUnavailable("queueProcessing", error);
       }
     }
 
@@ -482,7 +571,7 @@ export class MeetingsService implements OnModuleInit {
   async startRecording(auth: AuthContext, meetingId: string) {
     if (this.usePrisma) {
       try {
-        await this.getPrismaMeetingForOrg(auth.orgId, meetingId);
+        await this.getPrismaMeetingForOrg(auth.orgId, meetingId, auth.email);
         await this.prisma.meeting.update({
           where: { id: meetingId },
           data: { status: "recording" },
@@ -490,7 +579,7 @@ export class MeetingsService implements OnModuleInit {
         return { jobId: uuidv7() };
       } catch (error) {
         if (error instanceof NotFoundException) throw error;
-        this.logger.error(`Prisma startRecording failed, falling back to Map: ${error}`);
+        this.rethrowOrUnavailable("startRecording", error);
       }
     }
 
@@ -502,7 +591,7 @@ export class MeetingsService implements OnModuleInit {
   async getTranscript(auth: AuthContext, meetingId: string) {
     if (this.usePrisma) {
       try {
-        const meeting = await this.getPrismaMeetingForOrg(auth.orgId, meetingId);
+        const meeting = await this.getPrismaMeetingForOrg(auth.orgId, meetingId, auth.email);
         const artifact = await this.prisma.meetingArtifact.findUnique({
           where: { meetingId },
         });
@@ -516,7 +605,7 @@ export class MeetingsService implements OnModuleInit {
         throw new ConflictException("Transcript is not ready yet.");
       } catch (error) {
         if (error instanceof NotFoundException || error instanceof ConflictException) throw error;
-        this.logger.error(`Prisma getTranscript failed, falling back to Map: ${error}`);
+        this.rethrowOrUnavailable("getTranscript", error);
       }
     }
 
@@ -534,7 +623,7 @@ export class MeetingsService implements OnModuleInit {
   async getArtifacts(auth: AuthContext, meetingId: string) {
     if (this.usePrisma) {
       try {
-        await this.getPrismaMeetingForOrg(auth.orgId, meetingId);
+        await this.getPrismaMeetingForOrg(auth.orgId, meetingId, auth.email);
         const artifact = await this.prisma.meetingArtifact.findUnique({
           where: { meetingId },
         });
@@ -544,7 +633,7 @@ export class MeetingsService implements OnModuleInit {
         return this.prismaArtifactToContract(meetingId, artifact);
       } catch (error) {
         if (error instanceof NotFoundException || error instanceof ConflictException) throw error;
-        this.logger.error(`Prisma getArtifacts failed, falling back to Map: ${error}`);
+        this.rethrowOrUnavailable("getArtifacts", error);
       }
     }
 
@@ -559,7 +648,13 @@ export class MeetingsService implements OnModuleInit {
     if (this.usePrisma) {
       try {
         const meeting = await this.prisma.meeting.findFirst({
-          where: { id: meetingId, orgId: auth.orgId },
+          where: {
+            id: meetingId,
+            OR: [
+              { orgId: auth.orgId },
+              { shares: { some: { sharedWithEmail: auth.email } } },
+            ],
+          },
           include: { participants: true, uploads: { orderBy: { completedAt: "desc" }, take: 1 } },
         });
         if (!meeting) {
@@ -576,7 +671,7 @@ export class MeetingsService implements OnModuleInit {
         };
       } catch (error) {
         if (error instanceof NotFoundException) throw error;
-        this.logger.error(`Prisma getMeetingStatus failed, falling back to Map: ${error}`);
+        this.rethrowOrUnavailable("getMeetingStatus", error);
       }
     }
 
@@ -594,7 +689,7 @@ export class MeetingsService implements OnModuleInit {
   async saveActionItems(auth: AuthContext, meetingId: string, actionItems: ActionItem[]) {
     if (this.usePrisma) {
       try {
-        await this.getPrismaMeetingForOrg(auth.orgId, meetingId);
+        await this.getPrismaMeetingForOrg(auth.orgId, meetingId, auth.email);
         const existing = await this.prisma.meetingArtifact.findUnique({
           where: { meetingId },
         });
@@ -607,7 +702,7 @@ export class MeetingsService implements OnModuleInit {
         return { meetingId, count: actionItems.length };
       } catch (error) {
         if (error instanceof NotFoundException) throw error;
-        this.logger.error(`Prisma saveActionItems failed, falling back to Map: ${error}`);
+        this.rethrowOrUnavailable("saveActionItems", error);
       }
     }
 
@@ -617,6 +712,381 @@ export class MeetingsService implements OnModuleInit {
       meeting.artifact.actionItems = actionItems;
     }
     return { meetingId, count: actionItems.length };
+  }
+
+  /* ---------- Export meeting as Markdown ---------- */
+
+  async exportMeeting(auth: AuthContext, meetingId: string): Promise<{
+    title: string;
+    startsAt: string;
+    markdown: string;
+  }> {
+    let meetingTitle: string;
+    let meetingStartsAt: string;
+    let artifact: ContractArtifact | null = null;
+    let participantNames: string[] = [];
+
+    if (this.usePrisma) {
+      try {
+        const meeting = await this.prisma.meeting.findFirst({
+          where: {
+            id: meetingId,
+            OR: [
+              { orgId: auth.orgId },
+              ...(auth.email ? [{ shares: { some: { sharedWithEmail: auth.email } } }] : []),
+            ],
+          },
+          include: { participants: true },
+        });
+        if (!meeting) {
+          throw new NotFoundException(`Meeting ${meetingId} was not found.`);
+        }
+        meetingTitle = meeting.title;
+        meetingStartsAt = meeting.startsAt.toISOString();
+        participantNames = meeting.participants.map((p) => p.name);
+
+        const dbArtifact = await this.prisma.meetingArtifact.findUnique({
+          where: { meetingId },
+        });
+        if (dbArtifact) {
+          artifact = this.prismaArtifactToContract(meetingId, dbArtifact);
+        }
+      } catch (error) {
+        if (error instanceof NotFoundException) throw error;
+        this.rethrowOrUnavailable("exportMeeting", error);
+      }
+    } else {
+      const meeting = this.getMeetingForOrg(auth.orgId, meetingId);
+      meetingTitle = meeting.title;
+      meetingStartsAt = meeting.startsAt;
+      participantNames = meeting.participants.map((p) => p.name);
+      if (meeting.artifact) {
+        artifact = meeting.artifact;
+      }
+    }
+
+    // Build markdown
+    const lines: string[] = [];
+    lines.push(`# ${meetingTitle!}`);
+    lines.push("");
+    lines.push(`**Datum:** ${meetingStartsAt!}`);
+    if (participantNames!.length > 0) {
+      lines.push(`**Ucesnici:** ${participantNames!.join(", ")}`);
+    }
+    lines.push("");
+
+    if (artifact) {
+      if (artifact.summary) {
+        lines.push("## Rezime");
+        lines.push("");
+        lines.push(artifact.summary);
+        lines.push("");
+      }
+
+      if (artifact.decisions && artifact.decisions.length > 0) {
+        lines.push("## Odluke");
+        lines.push("");
+        artifact.decisions.forEach((d, i) => {
+          lines.push(`${i + 1}. ${d}`);
+        });
+        lines.push("");
+      }
+
+      if (artifact.actionItems && artifact.actionItems.length > 0) {
+        lines.push("## Akcioni koraci");
+        lines.push("");
+        artifact.actionItems.forEach((item) => {
+          const owner = item.owner ? ` (${item.owner})` : "";
+          lines.push(`- [ ] ${item.title}${owner}`);
+        });
+        lines.push("");
+      }
+
+      if (artifact.minutes && artifact.minutes.length > 0) {
+        lines.push("## Zapisnik");
+        lines.push("");
+        artifact.minutes.forEach((m) => {
+          lines.push(`- ${m}`);
+        });
+        lines.push("");
+      }
+
+      if (artifact.transcript && artifact.transcript.length > 0) {
+        lines.push("## Transkript");
+        lines.push("");
+        artifact.transcript.forEach((seg) => {
+          const speaker = seg.speakerName ?? seg.speakerLabel;
+          const startMin = Math.floor(seg.startMs / 60000);
+          const startSec = Math.floor((seg.startMs % 60000) / 1000);
+          const ts = `${String(startMin).padStart(2, "0")}:${String(startSec).padStart(2, "0")}`;
+          lines.push(`**${speaker}** [${ts}]: ${seg.text}`);
+          lines.push("");
+        });
+      }
+
+      if (artifact.risks && artifact.risks.length > 0) {
+        lines.push("## Rizici");
+        lines.push("");
+        artifact.risks.forEach((r) => {
+          lines.push(`- ${r}`);
+        });
+        lines.push("");
+      }
+
+      if (artifact.openQuestions && artifact.openQuestions.length > 0) {
+        lines.push("## Otvorena pitanja");
+        lines.push("");
+        artifact.openQuestions.forEach((q) => {
+          lines.push(`- ${q}`);
+        });
+        lines.push("");
+      }
+    } else {
+      lines.push("_Rezultati obrade jos nisu dostupni._");
+      lines.push("");
+    }
+
+    return {
+      title: meetingTitle!,
+      startsAt: meetingStartsAt!,
+      markdown: lines.join("\n"),
+    };
+  }
+
+  /* ---------- Delete meeting ---------- */
+
+  async deleteMeeting(auth: AuthContext, meetingId: string): Promise<{ deleted: true }> {
+    if (this.usePrisma) {
+      try {
+        const meeting = await this.prisma.meeting.findFirst({
+          where: { id: meetingId, orgId: auth.orgId, createdById: auth.userId },
+        });
+        if (!meeting) {
+          throw new NotFoundException(`Meeting ${meetingId} was not found.`);
+        }
+        if (meeting.createdById !== auth.userId) {
+          throw new ForbiddenException("Only the meeting owner can delete meetings.");
+        }
+        // All related records (participants, uploads, artifacts, shares, processing jobs)
+        // are cascade-deleted by Prisma schema onDelete: Cascade.
+        await this.prisma.meeting.delete({ where: { id: meetingId } });
+        return { deleted: true };
+      } catch (error) {
+        this.rethrowOrUnavailable("deleteMeeting", error);
+      }
+    }
+
+    // In-memory fallback
+    const meeting = this.meetings.get(meetingId);
+    if (!meeting || meeting.orgId !== auth.orgId) {
+      throw new NotFoundException(`Meeting ${meetingId} was not found.`);
+    }
+    if (meeting.createdBy !== auth.userId) {
+      throw new ForbiddenException("Only the meeting owner can delete meetings.");
+    }
+    this.meetings.delete(meetingId);
+    return { deleted: true };
+  }
+
+  /* ---------- Sharing ---------- */
+
+  async shareMeeting(auth: AuthContext, meetingId: string, email: string) {
+    if (!this.usePrisma) {
+      return { message: "Sharing requires database persistence." };
+    }
+
+    const meeting = await this.prisma.meeting.findFirst({
+      where: { id: meetingId, orgId: auth.orgId, createdById: auth.userId },
+    });
+    if (!meeting) {
+      throw new NotFoundException(`Meeting ${meetingId} was not found.`);
+    }
+    if (meeting.createdById !== auth.userId) {
+      throw new ForbiddenException("Only the meeting owner can share meetings.");
+    }
+
+    const share = await this.prisma.meetingShare.create({
+      data: {
+        id: uuidv7(),
+        meetingId,
+        sharedWithEmail: email.toLowerCase(),
+        sharedByUserId: auth.userId,
+      },
+    });
+
+    return {
+      id: share.id,
+      meetingId: share.meetingId,
+      sharedWithEmail: share.sharedWithEmail,
+      sharedByUserId: share.sharedByUserId,
+      createdAt: share.createdAt.toISOString(),
+    };
+  }
+
+  async listShares(auth: AuthContext, meetingId: string) {
+    if (!this.usePrisma) {
+      return [];
+    }
+
+    await this.getPrismaMeetingForOrg(auth.orgId, meetingId, auth.email);
+
+    const shares = await this.prisma.meetingShare.findMany({
+      where: { meetingId },
+      orderBy: { createdAt: "desc" },
+    });
+
+    return shares.map((s) => ({
+      id: s.id,
+      meetingId: s.meetingId,
+      sharedWithEmail: s.sharedWithEmail,
+      sharedByUserId: s.sharedByUserId,
+      createdAt: s.createdAt.toISOString(),
+    }));
+  }
+
+  async revokeShare(auth: AuthContext, meetingId: string, shareId: string) {
+    if (!this.usePrisma) {
+      return { message: "Sharing requires database persistence." };
+    }
+
+    const meeting = await this.prisma.meeting.findFirst({
+      where: { id: meetingId, orgId: auth.orgId, createdById: auth.userId },
+    });
+    if (!meeting) {
+      throw new NotFoundException(`Meeting ${meetingId} was not found.`);
+    }
+    if (meeting.createdById !== auth.userId) {
+      throw new ForbiddenException("Only the meeting owner can revoke shares.");
+    }
+
+    const share = await this.prisma.meetingShare.findFirst({
+      where: { id: shareId, meetingId },
+    });
+    if (!share) {
+      throw new NotFoundException(`Share ${shareId} was not found.`);
+    }
+
+    await this.prisma.meetingShare.delete({ where: { id: shareId } });
+
+    return { deleted: true };
+  }
+
+  /* ---------- Audio files ---------- */
+
+  async getAudioFiles(auth: AuthContext, meetingId: string) {
+    if (this.usePrisma) {
+      try {
+        await this.getPrismaMeetingForOrg(auth.orgId, meetingId, auth.email);
+        const uploads = await this.prisma.upload.findMany({
+          where: { meetingId },
+          orderBy: { completedAt: "desc" },
+        });
+
+        const results = [];
+        for (const upload of uploads) {
+          let downloadUrl = `/v1/meetings/${meetingId}/audio/${upload.id}/download`;
+
+          if (this.s3Service.isAvailable && upload.filePath && !upload.filePath.startsWith("/")) {
+            const presigned = await this.s3Service.getPresignedDownloadUrl(upload.filePath);
+            if (presigned) {
+              downloadUrl = presigned;
+            }
+          }
+
+          results.push({
+            uploadId: upload.id,
+            fileName: upload.fileName ?? "recording.m4a",
+            fileSizeBytes: upload.fileSizeBytes ? Number(upload.fileSizeBytes) : null,
+            contentType: upload.contentType ?? "audio/mp4",
+            downloadUrl,
+          });
+        }
+        return results;
+      } catch (error) {
+        if (error instanceof NotFoundException) throw error;
+        this.rethrowOrUnavailable("getAudioFiles", error);
+      }
+    }
+
+    // In-memory fallback
+    const meeting = this.getMeetingForOrg(auth.orgId, meetingId);
+    if (!meeting.upload?.filePath) {
+      return [];
+    }
+
+    return [{
+      uploadId: meeting.upload.id,
+      fileName: meeting.upload.fileName ?? "recording.m4a",
+      fileSizeBytes: meeting.upload.fileSizeBytes ?? null,
+      contentType: meeting.upload.contentType ?? "audio/mp4",
+      downloadUrl: `/v1/meetings/${meetingId}/audio/${meeting.upload.id}/download`,
+    }];
+  }
+
+  async getAudioDownloadInfo(auth: AuthContext, meetingId: string, uploadId: string): Promise<{
+    type: "local" | "s3";
+    filePath?: string;
+    contentType: string;
+    fileName: string;
+  }> {
+    if (this.usePrisma) {
+      try {
+        await this.getPrismaMeetingForOrg(auth.orgId, meetingId, auth.email);
+        const upload = await this.prisma.upload.findFirst({
+          where: { id: uploadId, meetingId },
+        });
+        if (!upload || !upload.filePath) {
+          throw new NotFoundException(`Upload ${uploadId} was not found for meeting ${meetingId}.`);
+        }
+
+        // If filePath starts with "/" it's a local file; otherwise it's an S3 key
+        if (upload.filePath.startsWith("/")) {
+          return {
+            type: "local",
+            filePath: upload.filePath,
+            contentType: upload.contentType ?? "audio/mp4",
+            fileName: upload.fileName ?? "recording.m4a",
+          };
+        }
+
+        // S3 path — redirect to presigned URL
+        if (this.s3Service.isAvailable) {
+          const presigned = await this.s3Service.getPresignedDownloadUrl(upload.filePath);
+          if (presigned) {
+            return {
+              type: "s3",
+              filePath: presigned,
+              contentType: upload.contentType ?? "audio/mp4",
+              fileName: upload.fileName ?? "recording.m4a",
+            };
+          }
+        }
+
+        // S3 key stored but S3 not available — try as local fallback
+        return {
+          type: "local",
+          filePath: upload.filePath,
+          contentType: upload.contentType ?? "audio/mp4",
+          fileName: upload.fileName ?? "recording.m4a",
+        };
+      } catch (error) {
+        if (error instanceof NotFoundException) throw error;
+        this.rethrowOrUnavailable("getAudioDownloadInfo", error);
+      }
+    }
+
+    // In-memory fallback
+    const meeting = this.getMeetingForOrg(auth.orgId, meetingId);
+    if (!meeting.upload || meeting.upload.id !== uploadId || !meeting.upload.filePath) {
+      throw new NotFoundException(`Upload ${uploadId} was not found for meeting ${meetingId}.`);
+    }
+
+    return {
+      type: "local",
+      filePath: meeting.upload.filePath,
+      contentType: meeting.upload.contentType ?? "audio/mp4",
+      fileName: meeting.upload.fileName ?? "recording.m4a",
+    };
   }
 
   /* ---------- In-memory helpers (Map fallback) ---------- */
@@ -676,9 +1146,15 @@ export class MeetingsService implements OnModuleInit {
 
   /* ---------- Prisma helpers ---------- */
 
-  private async getPrismaMeetingForOrg(orgId: string, meetingId: string) {
+  private async getPrismaMeetingForOrg(orgId: string, meetingId: string, email?: string) {
     const meeting = await this.prisma.meeting.findFirst({
-      where: { id: meetingId, orgId },
+      where: {
+        id: meetingId,
+        OR: [
+          { orgId },
+          ...(email ? [{ shares: { some: { sharedWithEmail: email } } }] : []),
+        ],
+      },
     });
     if (!meeting) {
       throw new NotFoundException(`Meeting ${meetingId} was not found.`);

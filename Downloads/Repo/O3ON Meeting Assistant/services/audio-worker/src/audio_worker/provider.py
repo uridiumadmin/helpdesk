@@ -348,7 +348,7 @@ class OpenAIProviderAdapter:
                         start_seconds=chunk_offset + float(seg.get("start", 0)),
                         end_seconds=chunk_offset + float(seg.get("end", 0)),
                         text=seg_text,
-                        confidence=float(seg.get("avg_logprob", -0.3)) + 1.3,
+                        confidence=min(max(float(seg.get("avg_logprob", -0.3)) + 1.3, 0.0), 1.0),
                     )
                 )
             if segments:
@@ -368,13 +368,13 @@ class OpenAIProviderAdapter:
     @staticmethod
     def _parse_confidence(value: object) -> float:
         if isinstance(value, (int, float)):
-            return float(value)
+            return min(max(float(value), 0.0), 1.0)
         text = str(value).strip().lower()
         mapping = {"high": 0.9, "medium": 0.6, "med": 0.6, "low": 0.3, "very high": 0.95, "very low": 0.1}
         if text in mapping:
             return mapping[text]
         try:
-            return float(text)
+            return min(max(float(text), 0.0), 1.0)
         except ValueError:
             return 0.5
 
@@ -526,7 +526,7 @@ class OpenAIProviderAdapter:
                     start_seconds=seg.start_seconds,
                     end_seconds=seg.end_seconds,
                     text=seg.text,
-                    confidence=min(seg.confidence + 0.05, 1.0) if speaker_name else seg.confidence,
+                    confidence=min(max(seg.confidence + 0.05, 0.0), 1.0) if speaker_name else seg.confidence,
                 )
             )
         return tuple(diarized)

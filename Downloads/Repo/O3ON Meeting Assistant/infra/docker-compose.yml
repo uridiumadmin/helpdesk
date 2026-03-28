@@ -68,7 +68,7 @@ services:
       - redis
       - minio
     volumes:
-      - api-data:/data
+      - shared-data:/data
 
   worker:
     build:
@@ -80,11 +80,12 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       WORKER_SHARED_SECRET: ${WORKER_SHARED_SECRET:-change-me-before-connecting-api-and-worker}
       WORKER_ENVIRONMENT: ${WORKER_ENVIRONMENT:-docker}
+      WORKER_STORAGE_ROOT: /data
+      WORKER_ALLOWED_SOURCE_ROOT: /data
     volumes:
-      - worker-data:/data
+      - shared-data:/data
 
 volumes:
   postgres-data:
   minio-data:
-  api-data:
-  worker-data:
+  shared-data:

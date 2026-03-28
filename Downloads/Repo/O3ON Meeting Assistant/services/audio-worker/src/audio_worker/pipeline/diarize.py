@@ -89,25 +89,23 @@ def diarize_chunks(
                     )
                 return tuple(diarized_segments)
             except Exception as exc:
-                print(f"[diarize] pyannote failed: {exc}, falling back to heuristic assignment")
+                print(f"[diarize] pyannote failed: {exc}, assigning all segments to 'unknown'")
 
     if not _HAS_PYANNOTE and participants:
-        print("[diarize] pyannote.audio not available, using heuristic speaker assignment")
+        print("[diarize] pyannote.audio not available, assigning all segments to 'unknown'")
 
+    # Fallback: assign all chunks to "unknown" with low confidence rather than
+    # guessing with round-robin, which produces completely wrong labels.
     diarized_segments: list[DiarizedSegment] = []
     for chunk in chunks:
         speaker_id = chunk.speaker_hint or default_speaker_id
-        if speaker_id == "speaker_unknown" and participants:
-            speaker_id = participants[(chunk.index - 1) % len(participants)].speaker_label or participants[
-                (chunk.index - 1) % len(participants)
-            ].participant_id
         diarized_segments.append(
             DiarizedSegment(
                 chunk_id=chunk.chunk_id,
                 speaker_id=speaker_id,
                 start_seconds=chunk.start_seconds,
                 end_seconds=chunk.end_seconds,
-                confidence=0.35 if speaker_id == "speaker_unknown" else 0.7,
+                confidence=0.2,
             )
         )
     return tuple(diarized_segments)

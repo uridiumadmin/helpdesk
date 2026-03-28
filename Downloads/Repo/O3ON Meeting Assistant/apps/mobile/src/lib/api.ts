@@ -2,14 +2,17 @@ import { Platform } from "react-native";
 import { appConfig } from "../config";
 import type {
   ActionItem,
+  AudioFile,
   AuthSession,
   Meeting,
   MeetingArtifact,
+  MeetingShare,
   MeetingStatusResponse,
   Participant,
   RecordingUploadResult,
   TranscriptSegment,
-  UploadSession
+  UploadSession,
+  UserProfile
 } from "../types";
 
 type RequestInitWithAuth = RequestInit & {
@@ -23,6 +26,12 @@ export class ApiError extends Error {
     super(message);
     this.status = status;
   }
+}
+
+let onAuthExpiredCallback: (() => void) | null = null;
+
+export function setOnAuthExpired(callback: (() => void) | null) {
+  onAuthExpiredCallback = callback;
 }
 
 async function request<T>(path: string, init: RequestInitWithAuth = {}): Promise<T> {
@@ -41,6 +50,10 @@ async function request<T>(path: string, init: RequestInitWithAuth = {}): Promise
   });
 
   if (!response.ok) {
+    // On 401, trigger auth expiry callback (auto-logout)
+    if (response.status === 401 && init.token && onAuthExpiredCallback) {
+      onAuthExpiredCallback();
+    }
     const text = await response.text();
     throw new ApiError(text || response.statusText, response.status);
   }
@@ -73,7 +86,14 @@ export const api = {
     });
   },
   getProfile(token: string) {
-    return request<AuthSession>("/v1/auth/me", { token });
+    return request<UserProfile>("/v1/auth/me", { token });
+  },
+  updateProfile(token: string, data: { fullName?: string }) {
+    return request<UserProfile>("/v1/auth/me", {
+      method: "PATCH",
+      token,
+      body: JSON.stringify(data),
+    });
   },
   listMeetings(token: string) {
     return request<Meeting[]>("/v1/meetings", { token });
@@ -88,6 +108,17 @@ export const api = {
       method: "POST",
       token,
       body: JSON.stringify(payload)
+    });
+  },
+  updateMeeting(
+    token: string,
+    meetingId: string,
+    data: { title?: string; startsAt?: string; durationMinutes?: number }
+  ) {
+    return request<Meeting>(`/v1/meetings/${meetingId}`, {
+      method: "PUT",
+      token,
+      body: JSON.stringify(data)
     });
   },
   startRecording(token: string, meetingId: string) {
@@ -169,6 +200,66 @@ export const api = {
       body: JSON.stringify({ items })
     });
   },
+  // Sharing
+  shareMeeting(token: string, meetingId: string, email: string) {
+    return request<MeetingShare>(`/v1/meetings/${meetingId}/shares`, {
+      method: "POST",
+      token,
+      body: JSON.stringify({ email }),
+    });
+  },
+  listShares(token: string, meetingId: string) {
+    return request<MeetingShare[]>(`/v1/meetings/${meetingId}/shares`, { token });
+  },
+  revokeShare(token: string, meetingId: string, shareId: string) {
+    return request<void>(`/v1/meetings/${meetingId}/shares/${shareId}`, {
+      method: "DELETE",
+      token,
+    });
+  },
+
+  // Admin user management
+  listUsers(token: string) {
+    return request<Array<{ id: string; email: string; fullName: string | null; role: string; createdAt: string }>>(
+      "/v1/auth/users", { token }
+    );
+  },
+  createUser(token: string, data: { email: string; fullName?: string; role?: string }) {
+    return request<{ id: string; email: string; fullName: string | null; role: string; generatedPassword: string }>(
+      "/v1/auth/users", { method: "POST", token, body: JSON.stringify(data) }
+    );
+  },
+
+  // Delete
+  deleteMeeting(token: string, meetingId: string) {
+    return request<{ deleted: boolean }>(`/v1/meetings/${meetingId}`, {
+      method: "DELETE",
+      token,
+    });
+  },
+
+  // Audio
+  getAudioFiles(token: string, meetingId: string) {
+    return request<AudioFile[]>(`/v1/meetings/${meetingId}/audio`, { token });
+  },
+
+  async exportMeeting(token: string, meetingId: string): Promise<string> {
+    const response = await fetch(`${appConfig.apiBaseUrl}/v1/meetings/${meetingId}/export`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "text/markdown",
+      },
+    });
+    if (!response.ok) {
+      if (response.status === 401 && token && onAuthExpiredCallback) {
+        onAuthExpiredCallback();
+      }
+      const text = await response.text();
+      throw new ApiError(text || response.statusText, response.status);
+    }
+    return response.text();
+  },
+
   ping(token: string) {
     return request<{ ok: boolean }>("/v1/ping", { token });
   }
