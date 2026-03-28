@@ -1,3 +1,4 @@
+import { Platform } from "react-native";
 import { appConfig } from "../config";
 import type {
   ActionItem,
@@ -104,11 +105,21 @@ export const api = {
   },
   async uploadRecordingFile(token: string, meetingId: string, uploadUrl: string, recordingUri: string) {
     const formData = new FormData();
-    formData.append("file", {
-      uri: recordingUri,
-      name: `meeting-${meetingId}.m4a`,
-      type: "audio/x-m4a"
-    } as never);
+
+    if (Platform.OS === "web") {
+      // On web, recordingUri is a blob: URL — fetch it to get the real blob
+      const blob = await fetch(recordingUri).then((r) => r.blob());
+      // Browser records WebM, not M4A — use correct extension based on MIME type
+      const ext = blob.type.includes("webm") ? "webm" : blob.type.includes("ogg") ? "ogg" : "m4a";
+      formData.append("file", blob, `meeting-${meetingId}.${ext}`);
+    } else {
+      // On native (iOS/Android), expo-av records M4A
+      formData.append("file", {
+        uri: recordingUri,
+        name: `meeting-${meetingId}.m4a`,
+        type: "audio/x-m4a"
+      } as never);
+    }
 
     const response = await fetch(toAbsoluteUrl(uploadUrl), {
       method: "POST",

@@ -1,17 +1,26 @@
-import * as SecureStore from "expo-secure-store";
+import { Platform } from "react-native";
+
+let SecureStore: typeof import("expo-secure-store") | null = null;
+if (Platform.OS !== "web") {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  SecureStore = require("expo-secure-store") as typeof import("expo-secure-store");
+}
 
 const SESSION_KEY = "o3on.meeting.session";
 
 export async function loadSecureString(key: string): Promise<string | null> {
-  return SecureStore.getItemAsync(key);
+  if (SecureStore) return SecureStore.getItemAsync(key);
+  try { return localStorage.getItem(key); } catch { return null; }
 }
 
 export async function saveSecureString(key: string, value: string): Promise<void> {
-  await SecureStore.setItemAsync(key, value);
+  if (SecureStore) { await SecureStore.setItemAsync(key, value); return; }
+  try { localStorage.setItem(key, value); } catch { /* web fallback */ }
 }
 
 export async function removeSecureString(key: string): Promise<void> {
-  await SecureStore.deleteItemAsync(key);
+  if (SecureStore) { await SecureStore.deleteItemAsync(key); return; }
+  try { localStorage.removeItem(key); } catch { /* web fallback */ }
 }
 
 export async function loadSessionValue() {

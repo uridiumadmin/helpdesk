@@ -12,8 +12,9 @@ class WorkerSettings:
     host: str = "127.0.0.1"
     port: int = 8080
     language: str = "sr"
-    transcription_model: str = "gpt-4o-mini-transcribe"
+    transcription_model: str = "gpt-4o-transcribe-diarize"
     summary_model: str = "gpt-4o"
+    diarize_enabled: bool = True
     chunk_seconds: int = 45
     chunk_overlap_seconds: int = 5
     max_speakers: int = 12
@@ -35,9 +36,13 @@ class WorkerSettings:
             port=int(os.getenv("WORKER_PORT", str(defaults.port))),
             language=os.getenv("WORKER_LANGUAGE", defaults.language),
             transcription_model=os.getenv(
-                "WORKER_TRANSCRIPTION_MODEL", defaults.transcription_model
+                "WORKER_TRANSCRIPTION_MODEL",
+                os.getenv("OPENAI_TRANSCRIBE_MODEL", defaults.transcription_model),
             ),
-            summary_model=os.getenv("WORKER_SUMMARY_MODEL", defaults.summary_model),
+            summary_model=os.getenv(
+                "WORKER_SUMMARY_MODEL",
+                os.getenv("OPENAI_SUMMARIZE_MODEL", defaults.summary_model),
+            ),
             chunk_seconds=int(os.getenv("WORKER_CHUNK_SECONDS", str(defaults.chunk_seconds))),
             chunk_overlap_seconds=int(
                 os.getenv("WORKER_CHUNK_OVERLAP_SECONDS", str(defaults.chunk_overlap_seconds))

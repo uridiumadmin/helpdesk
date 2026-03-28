@@ -266,26 +266,30 @@ export class MeetingsService implements OnModuleInit {
         }
 
         if (this.s3Service.isAvailable) {
-          const objectKey = upload.objectKey;
-          await this.s3Service.putObject(
-            objectKey,
-            file.buffer,
-            file.mimetype || "application/octet-stream"
-          );
-          await this.prisma.upload.update({
-            where: { id: uploadId },
-            data: {
-              filePath: objectKey,
+          try {
+            const objectKey = upload.objectKey;
+            await this.s3Service.putObject(
+              objectKey,
+              file.buffer,
+              file.mimetype || "application/octet-stream"
+            );
+            await this.prisma.upload.update({
+              where: { id: uploadId },
+              data: {
+                filePath: objectKey,
+                fileName: file.originalname || "recording.m4a",
+                fileSizeBytes: BigInt(file.buffer.byteLength),
+                contentType: file.mimetype || "application/octet-stream",
+              },
+            });
+            return {
+              uploadId,
               fileName: file.originalname || "recording.m4a",
-              fileSizeBytes: BigInt(file.buffer.byteLength),
-              contentType: file.mimetype || "application/octet-stream",
-            },
-          });
-          return {
-            uploadId,
-            fileName: file.originalname || "recording.m4a",
-            bytesStored: file.buffer.byteLength,
-          };
+              bytesStored: file.buffer.byteLength,
+            };
+          } catch (s3Error) {
+            this.logger.warn(`S3 upload failed in Prisma mode, falling back to local storage: ${s3Error}`);
+          }
         }
 
         const stored = await this.uploadStorageService.saveUploadedFile({
@@ -321,17 +325,21 @@ export class MeetingsService implements OnModuleInit {
     }
 
     if (this.s3Service.isAvailable) {
-      const objectKey = meeting.upload.objectKey;
-      await this.s3Service.putObject(objectKey, file.buffer, file.mimetype || "application/octet-stream");
-      meeting.upload.filePath = objectKey;
-      meeting.upload.fileName = file.originalname || "recording.m4a";
-      meeting.upload.fileSizeBytes = file.buffer.byteLength;
-      meeting.upload.contentType = file.mimetype || "application/octet-stream";
-      return {
-        uploadId,
-        fileName: meeting.upload.fileName,
-        bytesStored: file.buffer.byteLength,
-      };
+      try {
+        const objectKey = meeting.upload.objectKey;
+        await this.s3Service.putObject(objectKey, file.buffer, file.mimetype || "application/octet-stream");
+        meeting.upload.filePath = objectKey;
+        meeting.upload.fileName = file.originalname || "recording.m4a";
+        meeting.upload.fileSizeBytes = file.buffer.byteLength;
+        meeting.upload.contentType = file.mimetype || "application/octet-stream";
+        return {
+          uploadId,
+          fileName: meeting.upload.fileName,
+          bytesStored: file.buffer.byteLength,
+        };
+      } catch (s3Error) {
+        this.logger.warn(`S3 upload failed, falling back to local storage: ${s3Error}`);
+      }
     }
 
     const stored = await this.uploadStorageService.saveUploadedFile({
@@ -957,23 +965,30 @@ export class MeetingsService implements OnModuleInit {
       confidence: item.confidence,
     }));
 
+    // APPEND transcript segments to existing artifact (multi-chunk support)
+    const existingTranscript = meeting.artifact?.transcript ?? [];
+    const mergedTranscript = [...existingTranscript, ...transcript];
+
+    const existingActionItems = meeting.artifact?.actionItems ?? [];
+    const mergedActionItems = [...existingActionItems, ...actionItems];
+
     meeting.artifact = {
       meetingId: meeting.id,
-      transcript,
+      transcript: mergedTranscript,
       summary: result.artifact.summary,
       minutes: result.artifact.meeting_minutes
         .split(/\n+/)
         .map((line) => line.trim())
         .filter(Boolean),
-      decisions: result.artifact.decisions ?? [],
-      risks: result.artifact.risks ?? [],
-      openQuestions: result.artifact.next_steps ?? [],
-      actionItems,
+      decisions: Array.isArray(result.artifact.decisions) ? result.artifact.decisions : (result.artifact.decisions ? [result.artifact.decisions] : []),
+      risks: Array.isArray(result.artifact.risks) ? result.artifact.risks : (result.artifact.risks ? [result.artifact.risks] : []),
+      openQuestions: Array.isArray(result.artifact.next_steps) ? result.artifact.next_steps : (result.artifact.next_steps ? [result.artifact.next_steps] : []),
+      actionItems: mergedActionItems,
       needsReview: (result.warnings ?? []).length > 0,
     };
     const artifact = meeting.artifact;
     meeting.summary = artifact.summary;
-    meeting.actionItems = actionItems;
+    meeting.actionItems = mergedActionItems;
     meeting.status = artifact.needsReview ? "needs_review" : "ready";
   }
 
@@ -1016,28 +1031,39 @@ export class MeetingsService implements OnModuleInit {
     const needsReview = (result.warnings ?? []).length > 0;
     const status = needsReview ? "needs_review" : "ready";
 
+    // APPEND transcript segments to existing artifact (multi-chunk support)
+    const existing = await this.prisma.meetingArtifact.findUnique({ where: { meetingId } });
+    const existingTranscript = existing?.transcriptJson
+      ? (Array.isArray(existing.transcriptJson) ? existing.transcriptJson : [])
+      : [];
+    const existingActionItems = existing?.actionItemsJson
+      ? (Array.isArray(existing.actionItemsJson) ? existing.actionItemsJson : [])
+      : [];
+    const mergedTranscript = [...(existingTranscript as unknown[]), ...transcript];
+    const mergedActionItems = [...(existingActionItems as unknown[]), ...actionItems];
+
     await this.prisma.meetingArtifact.upsert({
       where: { meetingId },
       create: {
         id: uuidv7(),
         meetingId,
         summaryText: result.artifact.summary,
-        transcriptJson: JSON.parse(JSON.stringify(transcript)),
+        transcriptJson: JSON.parse(JSON.stringify(mergedTranscript)),
         minutesJson: JSON.parse(JSON.stringify(minutes)),
         decisionsJson: JSON.parse(JSON.stringify(result.artifact.decisions ?? [])),
         risksJson: JSON.parse(JSON.stringify(result.artifact.risks ?? [])),
         openQuestionsJson: JSON.parse(JSON.stringify(result.artifact.next_steps ?? [])),
-        actionItemsJson: JSON.parse(JSON.stringify(actionItems)),
+        actionItemsJson: JSON.parse(JSON.stringify(mergedActionItems)),
         needsReview,
       },
       update: {
         summaryText: result.artifact.summary,
-        transcriptJson: JSON.parse(JSON.stringify(transcript)),
+        transcriptJson: JSON.parse(JSON.stringify(mergedTranscript)),
         minutesJson: JSON.parse(JSON.stringify(minutes)),
         decisionsJson: JSON.parse(JSON.stringify(result.artifact.decisions ?? [])),
         risksJson: JSON.parse(JSON.stringify(result.artifact.risks ?? [])),
         openQuestionsJson: JSON.parse(JSON.stringify(result.artifact.next_steps ?? [])),
-        actionItemsJson: JSON.parse(JSON.stringify(actionItems)),
+        actionItemsJson: JSON.parse(JSON.stringify(mergedActionItems)),
         needsReview,
       },
     });

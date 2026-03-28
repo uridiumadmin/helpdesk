@@ -1,7 +1,7 @@
 import { Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { mkdir, writeFile } from "node:fs/promises";
-import { basename, extname, join } from "node:path";
+import { basename, extname, join, resolve } from "node:path";
 
 @Injectable()
 export class UploadStorageService {
@@ -27,7 +27,7 @@ export class UploadStorageService {
 
     await writeFile(path, input.bytes, { mode: 0o600 });
     return {
-      path,
+      path: resolve(path),
       fileName,
       size: input.bytes.byteLength
     };

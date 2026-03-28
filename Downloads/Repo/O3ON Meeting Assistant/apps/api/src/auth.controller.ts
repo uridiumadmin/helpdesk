@@ -38,9 +38,38 @@ export class AuthController {
       throw new ForbiddenException("DEV_AUTH_SECRET must be configured for development auth.");
     }
 
-    const expectedPassword = this.configService.get<string>("DEV_AUTH_PASSWORD")?.trim();
-    if (!expectedPassword || dto.password !== expectedPassword) {
-      throw new UnauthorizedException("Invalid development credentials.");
+    // USER_CREDENTIALS format: email:password|email:password|...
+    // If set, each user has their own password. Falls back to DEV_AUTH_PASSWORD for all users.
+    const userCredentials = this.configService.get<string>("USER_CREDENTIALS")?.trim();
+    if (userCredentials) {
+      const credentials = new Map<string, string>();
+      for (const entry of userCredentials.split("|")) {
+        const sepIndex = entry.indexOf(":");
+        if (sepIndex > 0) {
+          credentials.set(entry.slice(0, sepIndex).trim().toLowerCase(), entry.slice(sepIndex + 1).trim());
+        }
+      }
+      const userPassword = credentials.get(dto.email.toLowerCase());
+      if (!userPassword) {
+        throw new ForbiddenException("Vaš nalog nema pristup ovoj aplikaciji.");
+      }
+      if (dto.password !== userPassword) {
+        throw new UnauthorizedException("Pogrešna lozinka.");
+      }
+    } else {
+      // Fallback: single password for all users
+      const expectedPassword = this.configService.get<string>("DEV_AUTH_PASSWORD")?.trim();
+      if (!expectedPassword || dto.password !== expectedPassword) {
+        throw new UnauthorizedException("Pogrešna lozinka.");
+      }
+      // Check allowed users list (comma-separated emails)
+      const allowedUsers = (this.configService.get<string>("ALLOWED_USERS") ?? "")
+        .split(",")
+        .map((e) => e.trim().toLowerCase())
+        .filter(Boolean);
+      if (allowedUsers.length > 0 && !allowedUsers.includes(dto.email.toLowerCase())) {
+        throw new ForbiddenException("Vaš nalog nema pristup ovoj aplikaciji.");
+      }
     }
 
     const local = {

@@ -15,6 +15,8 @@ import { S3Module } from "./storage/s3.module";
       isGlobal: true,
       validationSchema: Joi.object({
         AUTH_MODE: Joi.string().valid("development", "auth0").default("auth0"),
+        ALLOWED_USERS: Joi.string().allow("").optional(),
+        USER_CREDENTIALS: Joi.string().allow("").optional(),
         AUTH0_DOMAIN: Joi.string().allow("").optional(),
         AUTH0_AUDIENCE: Joi.string().allow("").optional(),
         JWT_ISSUER: Joi.string().allow("").optional(),
