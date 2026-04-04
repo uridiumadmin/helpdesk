@@ -281,6 +281,7 @@ export function MeetingsScreen({
   const [participants, setParticipants] = useState("");
   const [duration, setDuration] = useState<number>(30);
   const [creating, setCreating] = useState(false);
+  const [importing, setImporting] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
 
   // Animations
@@ -426,6 +427,63 @@ export function MeetingsScreen({
       );
     } finally {
       setCreating(false);
+    }
+  }
+
+  // --------------------------------------------------
+  // Import external audio file
+  // --------------------------------------------------
+
+  function pickAudioFile(): Promise<File | null> {
+    return new Promise((resolve) => {
+      if (typeof document === "undefined") { resolve(null); return; }
+      const input = document.createElement("input");
+      input.type = "file";
+      input.accept = "audio/*,.mp3,.wav,.m4a,.ogg,.webm,.mp4,.aac,.flac";
+      input.onchange = () => resolve(input.files?.[0] ?? null);
+      input.click();
+    });
+  }
+
+  async function handleImportAudio() {
+    const file = await pickAudioFile();
+    if (!file) return;
+
+    const MAX_SIZE = 512 * 1024 * 1024;
+    if (file.size > MAX_SIZE) {
+      setCreateError("Fajl je prevelik (maks. 512 MB).");
+      return;
+    }
+
+    setImporting(true);
+    setCreateError(null);
+
+    try {
+      const participantNames = participants
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
+
+      const created = await api.createMeeting(token, {
+        title: title.trim() || "Uvezeni sastanak",
+        startsAt: new Date().toISOString(),
+        durationMinutes: duration,
+        participantNames,
+      });
+
+      const session = await api.requestUploadSession(token, created.id);
+      await api.uploadAudioFile(token, created.id, session.uploadUrl, file);
+      await api.completeUploadWithDuration(token, created.id, session.uploadId, 0);
+
+      resetForm();
+      setFormOpen(false);
+      onOpenMeeting(created);
+    } catch (err) {
+      setCreateError(
+        err instanceof Error ? err.message : "Greška pri uvozu audio fajla",
+      );
+    } finally {
+      setImporting(false);
     }
   }
 
@@ -679,6 +737,13 @@ export function MeetingsScreen({
             style={styles.formButtonSecondary}
           />
         </View>
+        <PrimaryButton
+          label={importing ? "Otpremanje..." : "Uvezi audio fajl"}
+          onPress={() => void handleImportAudio()}
+          disabled={creating || importing}
+          variant="secondary"
+          style={{ marginTop: 6 }}
+        />
       </View>
     );
   }

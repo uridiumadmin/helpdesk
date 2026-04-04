@@ -169,6 +169,26 @@ export const api = {
 
     return (await response.json()) as RecordingUploadResult;
   },
+  async uploadAudioFile(token: string, meetingId: string, uploadUrl: string, file: File) {
+    const formData = new FormData();
+    formData.append("file", file, file.name);
+
+    const response = await fetch(toAbsoluteUrl(uploadUrl), {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: formData,
+    });
+
+    if (!response.ok) {
+      const text = await response.text();
+      throw new ApiError(text || response.statusText, response.status);
+    }
+
+    return (await response.json()) as RecordingUploadResult;
+  },
   completeUpload(token: string, meetingId: string, uploadId: string) {
     return request<{ processingJobId: string }>(`/v1/meetings/${meetingId}/uploads/complete`, {
       method: "POST",
