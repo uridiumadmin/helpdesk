@@ -312,7 +312,7 @@ export function ProfileScreen({ token, user, onBack, onUpdated }: Props) {
           style={styles.backBtn}
         >
           <Text style={[styles.backArrow, { color: colors.textMuted }]}>
-            {"<"}
+            {"\u2190"}
           </Text>
           <Text style={[styles.backLabel, { color: colors.textMuted }]}>
             Sastanci
