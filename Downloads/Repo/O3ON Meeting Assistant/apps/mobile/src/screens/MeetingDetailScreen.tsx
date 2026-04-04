@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Animated,
@@ -175,6 +175,12 @@ export function MeetingDetailScreen({ meeting, token, onBack, currentUserId }: {
   const [speakerSaving, setSpeakerSaving] = useState(false);
   const [speakerSaveSuccess, setSpeakerSaveSuccess] = useState(false);
 
+  // Memoize unique speaker labels to prevent IIFE re-creation on every render (focus loss fix)
+  const uniqueSpeakerLabels = useMemo(() => {
+    if (!artifact || artifact.transcript.length === 0) return [];
+    return Array.from(new Set(artifact.transcript.map((seg) => seg.speakerLabel)));
+  }, [artifact]);
+
   // Fade-in animation
   const fadeIn = useRef(new Animated.Value(0)).current;
   useEffect(() => {
@@ -293,8 +299,8 @@ export function MeetingDetailScreen({ meeting, token, onBack, currentUserId }: {
       setSpeakerMappings(map);
       setSpeakerSaveSuccess(true);
       setTimeout(() => setSpeakerSaveSuccess(false), 2000);
-    } catch {
-      // silently fail
+    } catch (err) {
+      setShareError(err instanceof Error ? err.message : "Greška pri čuvanju imena");
     } finally {
       setSpeakerSaving(false);
     }
@@ -339,6 +345,7 @@ export function MeetingDetailScreen({ meeting, token, onBack, currentUserId }: {
   // Auto-scroll state
   const scrollViewRef = useRef<ScrollView>(null);
   const segmentYPositions = useRef<Record<string, number>>({});
+  const transcriptCardOffsetY = useRef<number>(0);
   const lastAutoScrollSegId = useRef<string | null>(null);
   const userScrolledAt = useRef<number>(0);
   const AUTO_SCROLL_COOLDOWN = 5000;
@@ -364,9 +371,10 @@ export function MeetingDetailScreen({ meeting, token, onBack, currentUserId }: {
     if (activeSeg.id === lastAutoScrollSegId.current) return;
 
     lastAutoScrollSegId.current = activeSeg.id;
-    const y = segmentYPositions.current[activeSeg.id];
-    if (y !== undefined && scrollViewRef.current) {
-      scrollViewRef.current.scrollTo({ y: Math.max(0, y - 100), animated: true });
+    const relY = segmentYPositions.current[activeSeg.id];
+    if (relY !== undefined && scrollViewRef.current) {
+      const absY = transcriptCardOffsetY.current + relY;
+      scrollViewRef.current.scrollTo({ y: Math.max(0, absY - 120), animated: true });
     }
   }, [currentTimeMs, artifact]);
 
@@ -942,106 +950,101 @@ export function MeetingDetailScreen({ meeting, token, onBack, currentUserId }: {
               ) : null}
 
               {/* Speakers card */}
-              {artifact.transcript.length > 0 ? (() => {
-                const uniqueLabels = Array.from(
-                  new Set(artifact.transcript.map((seg) => seg.speakerLabel))
-                );
-                return uniqueLabels.length > 0 ? (
-                  <>
-                    <Card>
-                      <Text
-                        style={[styles.sectionTitle, { color: colors.text }]}
-                      >
-                        Sagovornici
-                      </Text>
-                      {uniqueLabels.map((label) => {
-                        const sColor = speakerColor(label);
-                        return (
-                          <View key={label} style={styles.speakerRow}>
-                            <View
-                              style={[
-                                styles.speakerDot,
-                                { backgroundColor: sColor },
-                              ]}
-                            />
-                            <Text
-                              style={[
-                                styles.speakerLabel,
-                                { color: sColor },
-                              ]}
-                              numberOfLines={1}
-                            >
-                              {label}
-                            </Text>
-                            <TextInput
-                              style={[
-                                styles.speakerInput,
-                                {
-                                  backgroundColor: colors.bgInput,
-                                  borderColor: colors.borderLight,
-                                  color: colors.text,
-                                },
-                              ]}
-                              placeholder="Unesite ime"
-                              placeholderTextColor={colors.textDim}
-                              value={speakerInputs[label] ?? ""}
-                              onChangeText={(v) =>
-                                setSpeakerInputs((prev) => ({
-                                  ...prev,
-                                  [label]: v,
-                                }))
-                              }
-                              maxLength={100}
-                              autoCapitalize="words"
-                              autoCorrect={false}
-                            />
-                          </View>
-                        );
-                      })}
-                      <View style={styles.speakerBtnRow}>
-                        {speakerSaveSuccess ? (
+              {uniqueSpeakerLabels.length > 0 ? (
+                <>
+                  <Card>
+                    <Text
+                      style={[styles.sectionTitle, { color: colors.text }]}
+                    >
+                      Sagovornici
+                    </Text>
+                    {uniqueSpeakerLabels.map((label) => {
+                      const sColor = speakerColor(label);
+                      return (
+                        <View key={label} style={styles.speakerRow}>
                           <View
                             style={[
-                              styles.speakerSuccessToast,
-                              { backgroundColor: colors.successBg },
+                              styles.speakerDot,
+                              { backgroundColor: sColor },
                             ]}
-                          >
-                            <Text
-                              style={[
-                                styles.speakerSuccessText,
-                                { color: colors.success },
-                              ]}
-                            >
-                              Imena sačuvana!
-                            </Text>
-                          </View>
-                        ) : (
-                          <Pressable
-                            onPress={handleSaveSpeakers}
-                            disabled={speakerSaving}
+                          />
+                          <Text
                             style={[
-                              styles.speakerSaveBtn,
+                              styles.speakerLabel,
+                              { color: sColor },
+                            ]}
+                            numberOfLines={1}
+                          >
+                            {label}
+                          </Text>
+                          <TextInput
+                            style={[
+                              styles.speakerInput,
                               {
-                                backgroundColor: colors.brand,
-                                opacity: speakerSaving ? 0.5 : 1,
+                                backgroundColor: colors.bgInput,
+                                borderColor: colors.borderLight,
+                                color: colors.text,
                               },
                             ]}
+                            placeholder="Unesite ime"
+                            placeholderTextColor={colors.textDim}
+                            value={speakerInputs[label] ?? ""}
+                            onChangeText={(v) =>
+                              setSpeakerInputs((prev) => ({
+                                ...prev,
+                                [label]: v,
+                              }))
+                            }
+                            maxLength={100}
+                            autoCapitalize="words"
+                            autoCorrect={false}
+                          />
+                        </View>
+                      );
+                    })}
+                    <View style={styles.speakerBtnRow}>
+                      {speakerSaveSuccess ? (
+                        <View
+                          style={[
+                            styles.speakerSuccessToast,
+                            { backgroundColor: colors.successBg },
+                          ]}
+                        >
+                          <Text
+                            style={[
+                              styles.speakerSuccessText,
+                              { color: colors.success },
+                            ]}
                           >
-                            <Text style={styles.speakerSaveBtnText}>
-                              {speakerSaving ? "..." : "Sacuvaj imena"}
-                            </Text>
-                          </Pressable>
-                        )}
-                      </View>
-                    </Card>
-                    <SectionDivider />
-                  </>
-                ) : null;
-              })() : null}
+                            Imena sačuvana!
+                          </Text>
+                        </View>
+                      ) : (
+                        <Pressable
+                          onPress={handleSaveSpeakers}
+                          disabled={speakerSaving}
+                          style={[
+                            styles.speakerSaveBtn,
+                            {
+                              backgroundColor: colors.brand,
+                              opacity: speakerSaving ? 0.5 : 1,
+                            },
+                          ]}
+                        >
+                          <Text style={styles.speakerSaveBtnText}>
+                            {speakerSaving ? "..." : "Sačuvaj imena"}
+                          </Text>
+                        </Pressable>
+                      )}
+                    </View>
+                  </Card>
+                  <SectionDivider />
+                </>
+              ) : null}
 
               {/* Transcript card */}
               {artifact.transcript.length > 0 ? (
-                <>
+                <View onLayout={(e) => { transcriptCardOffsetY.current = e.nativeEvent.layout.y; }}>
                   <Card>
                     <Text
                       style={[
@@ -1079,10 +1082,10 @@ export function MeetingDetailScreen({ meeting, token, onBack, currentUserId }: {
                             isActive
                               ? {
                                   borderLeftWidth: 3,
-                                  borderLeftColor: "#D4A017",
+                                  borderLeftColor: "#E91E63",
                                   backgroundColor: isDark
-                                    ? "rgba(212, 160, 23, 0.08)"
-                                    : "rgba(212, 160, 23, 0.06)",
+                                    ? "rgba(233, 30, 99, 0.08)"
+                                    : "rgba(233, 30, 99, 0.06)",
                                   paddingLeft: 12,
                                 }
                               : null,
@@ -1164,7 +1167,7 @@ export function MeetingDetailScreen({ meeting, token, onBack, currentUserId }: {
                     })}
                   </Card>
                   <SectionDivider />
-                </>
+                </View>
               ) : (
                 <>
                   <View
