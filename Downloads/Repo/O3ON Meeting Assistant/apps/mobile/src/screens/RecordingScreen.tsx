@@ -463,6 +463,38 @@ export function RecordingScreen({ meeting, token, onDone, onBack }: Props) {
     }
   }, [startRecordingChunk]);
 
+  // ── Auto-split: every 5 minutes, silently rotate the recording chunk ──
+
+  const AUTO_SPLIT_SECONDS = 5 * 60; // 5 minutes
+  const autoSplitBusyRef = useRef(false);
+
+  useEffect(() => {
+    if (phase !== "recording") return;
+
+    const chunkElapsed = seconds - chunkStartSecondsRef.current;
+    if (chunkElapsed < AUTO_SPLIT_SECONDS) return;
+    if (autoSplitBusyRef.current) return;
+
+    autoSplitBusyRef.current = true;
+    (async () => {
+      try {
+        const chunk = await stopCurrentRecording();
+        if (chunk) {
+          setUploadingChunkIndex(chunk.index);
+          uploadChunk(chunk.uri, chunk.durationSeconds, chunk.index).finally(() => {
+            if (isMountedRef.current) setUploadingChunkIndex(null);
+          });
+        }
+        currentChunkIndexRef.current += 1;
+        await startRecordingChunk();
+      } catch (err) {
+        console.warn("Auto-split failed:", err instanceof Error ? err.message : err);
+      } finally {
+        autoSplitBusyRef.current = false;
+      }
+    })();
+  }, [seconds, phase, stopCurrentRecording, startRecordingChunk, uploadChunk]);
+
   // ── Stop (final) ──────────────────────────────────────────────────────
 
   const handleStop = useCallback(async () => {
