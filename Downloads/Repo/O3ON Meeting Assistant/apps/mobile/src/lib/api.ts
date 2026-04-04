@@ -10,6 +10,7 @@ import type {
   MeetingStatusResponse,
   Participant,
   RecordingUploadResult,
+  SpeakerMapping,
   TranscriptSegment,
   UploadSession,
   UserProfile
@@ -242,6 +243,18 @@ export const api = {
     return request<{ deleted: boolean }>(`/v1/meetings/${meetingId}`, {
       method: "DELETE",
       token,
+    });
+  },
+
+  // Speaker mappings
+  getSpeakerMappings(token: string, meetingId: string) {
+    return request<SpeakerMapping[]>(`/v1/meetings/${meetingId}/speakers`, { token });
+  },
+  updateSpeakerMappings(token: string, meetingId: string, mappings: SpeakerMapping[]) {
+    return request<{ updated: number }>(`/v1/meetings/${meetingId}/speakers`, {
+      method: "PUT",
+      token,
+      body: JSON.stringify({ mappings }),
     });
   },
 

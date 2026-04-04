@@ -52,6 +52,7 @@ model Meeting {
   processingJobs  ProcessingJob[]
   shares          MeetingShare[]
   chunkJobs       ChunkJob[]
+  speakerMappings SpeakerMapping[]
 
   @@index([orgId])
   @@map("meetings")
@@ -142,4 +143,15 @@ model ChunkJob {
   completedAt     DateTime? @map("completed_at")
   @@index([meetingId])
   @@map("chunk_jobs")
+}
+
+model SpeakerMapping {
+  id           String  @id @default(uuid())
+  meetingId    String  @map("meeting_id")
+  meeting      Meeting @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  speakerLabel String  @map("speaker_label")
+  displayName  String  @map("display_name")
+
+  @@unique([meetingId, speakerLabel])
+  @@map("speaker_mappings")
 }

@@ -233,7 +233,7 @@ export function RecordingScreen({ meeting, token, onDone, onBack }: Props) {
       case "uploading":
         return "Otpremanje...";
       case "stopped":
-        return "Zavrseno";
+        return "Završeno";
     }
   }
 
@@ -382,7 +382,7 @@ export function RecordingScreen({ meeting, token, onDone, onBack }: Props) {
       setError(
         cause instanceof Error
           ? cause.message
-          : "Nije moguce pokrenuti snimanje.",
+          : "Nije moguće pokrenuti snimanje.",
       );
     }
   }, [token, meeting.id, startRecordingChunk]);
@@ -441,7 +441,7 @@ export function RecordingScreen({ meeting, token, onDone, onBack }: Props) {
       setError(
         cause instanceof Error
           ? cause.message
-          : "Greska prilikom pauziranja.",
+          : "Greška prilikom pauziranja.",
       );
     }
   }, [stopCurrentRecording, uploadChunk]);
@@ -458,7 +458,7 @@ export function RecordingScreen({ meeting, token, onDone, onBack }: Props) {
       setError(
         cause instanceof Error
           ? cause.message
-          : "Nije moguce nastaviti snimanje.",
+          : "Nije moguće nastaviti snimanje.",
       );
     }
   }, [startRecordingChunk]);
@@ -524,7 +524,7 @@ export function RecordingScreen({ meeting, token, onDone, onBack }: Props) {
         setError(
           cause instanceof Error
             ? cause.message
-            : "Greska prilikom zaustavljanja.",
+            : "Greška prilikom zaustavljanja.",
         );
         setPhase("paused");
       }
@@ -660,7 +660,7 @@ export function RecordingScreen({ meeting, token, onDone, onBack }: Props) {
         {/* Idle: Start button */}
         {isIdle ? (
           <PrimaryButton
-            label="Zapocni snimanje"
+            label="Započni snimanje"
             onPress={() => void handleStart()}
             variant="brand"
             style={styles.actionButtonLarge}
@@ -691,7 +691,7 @@ export function RecordingScreen({ meeting, token, onDone, onBack }: Props) {
               ]}
             >
               <View style={styles.stopIcon} />
-              <Text style={styles.stopLabel}>Zavrsi</Text>
+              <Text style={styles.stopLabel}>Završi</Text>
             </Pressable>
           </View>
         ) : null}
@@ -715,7 +715,7 @@ export function RecordingScreen({ meeting, token, onDone, onBack }: Props) {
               ]}
             >
               <View style={styles.stopIcon} />
-              <Text style={styles.stopLabel}>Zavrsi</Text>
+              <Text style={styles.stopLabel}>Završi</Text>
             </Pressable>
           </View>
         ) : null}

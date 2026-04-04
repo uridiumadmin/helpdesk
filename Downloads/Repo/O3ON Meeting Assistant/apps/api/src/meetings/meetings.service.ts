@@ -1493,6 +1493,54 @@ export class MeetingsService implements OnModuleInit {
     };
   }
 
+  /* ---------- Speaker mappings ---------- */
+
+  async getSpeakerMappings(auth: AuthContext, meetingId: string) {
+    if (!this.usePrisma) {
+      return [];
+    }
+    try {
+      await this.getPrismaMeetingForOrg(auth.orgId, meetingId, auth.email);
+      return this.prisma.speakerMapping.findMany({
+        where: { meetingId },
+        select: { speakerLabel: true, displayName: true },
+      });
+    } catch (error) {
+      this.rethrowOrUnavailable("getSpeakerMappings", error);
+    }
+  }
+
+  async updateSpeakerMappings(
+    auth: AuthContext,
+    meetingId: string,
+    mappings: Array<{ speakerLabel: string; displayName: string }>
+  ) {
+    if (!this.usePrisma) {
+      return { updated: 0 };
+    }
+    try {
+      await this.getPrismaMeetingForOrg(auth.orgId, meetingId, auth.email);
+      for (const m of mappings) {
+        await this.prisma.speakerMapping.upsert({
+          where: {
+            meetingId_speakerLabel: { meetingId, speakerLabel: m.speakerLabel },
+          },
+          create: {
+            meetingId,
+            speakerLabel: m.speakerLabel,
+            displayName: m.displayName,
+          },
+          update: {
+            displayName: m.displayName,
+          },
+        });
+      }
+      return { updated: mappings.length };
+    } catch (error) {
+      this.rethrowOrUnavailable("updateSpeakerMappings", error);
+    }
+  }
+
   /* ---------- Prisma helpers ---------- */
 
   private async getPrismaMeetingForOrg(orgId: string, meetingId: string, email?: string) {

@@ -277,7 +277,7 @@ export function AuthScreen({ onSignIn }: Props) {
           {/* ---- Footer ---- */}
           <Animated.View style={{ opacity: fadeIn }}>
             <Text style={[styles.footer, { color: colors.textDim }]}>
-              Svi podaci se obradjuju na serveru. AI kljucevi ne napustaju
+              Svi podaci se obrađuju na serveru. AI ključevi ne napuštaju
               backend.
             </Text>
             <Text style={[styles.version, { color: colors.textDim }]}>

@@ -16,7 +16,7 @@ import { AudioPlayerBar, AudioPlayerRef } from "../components/AudioPlayerBar";
 import { useTheme } from "../theme/ThemeContext";
 import { useProcessingStatus } from "../hooks/useProcessingStatus";
 import { api } from "../lib/api";
-import type { AudioFile, Meeting, MeetingArtifact, MeetingShare } from "../types";
+import type { AudioFile, Meeting, MeetingArtifact, MeetingShare, SpeakerMapping } from "../types";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -169,6 +169,12 @@ export function MeetingDetailScreen({ meeting, token, onBack, currentUserId }: {
   // Audio state
   const [audioFiles, setAudioFiles] = useState<AudioFile[]>([]);
 
+  // Speaker mapping state
+  const [speakerMappings, setSpeakerMappings] = useState<Record<string, string>>({});
+  const [speakerInputs, setSpeakerInputs] = useState<Record<string, string>>({});
+  const [speakerSaving, setSpeakerSaving] = useState(false);
+  const [speakerSaveSuccess, setSpeakerSaveSuccess] = useState(false);
+
   // Fade-in animation
   const fadeIn = useRef(new Animated.Value(0)).current;
   useEffect(() => {
@@ -192,7 +198,7 @@ export function MeetingDetailScreen({ meeting, token, onBack, currentUserId }: {
           setLoadError(
             err instanceof Error
               ? err.message
-              : "Neuspesno ucitavanje rezultata",
+              : "Neuspešno učitavanje rezultata",
           );
         }
       }
@@ -250,6 +256,50 @@ export function MeetingDetailScreen({ meeting, token, onBack, currentUserId }: {
     return () => { cancelled = true; };
   }, [token, meeting.id]);
 
+  // Fetch speaker mappings
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const mappings = await api.getSpeakerMappings(token, meeting.id);
+        if (!cancelled) {
+          const map: Record<string, string> = {};
+          for (const m of mappings) {
+            map[m.speakerLabel] = m.displayName;
+          }
+          setSpeakerMappings(map);
+          setSpeakerInputs(map);
+        }
+      } catch {
+        // silently fail
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [token, meeting.id]);
+
+  // Save speaker mappings handler
+  async function handleSaveSpeakers() {
+    setSpeakerSaving(true);
+    setSpeakerSaveSuccess(false);
+    try {
+      const mappingsToSave: SpeakerMapping[] = Object.entries(speakerInputs)
+        .filter(([, name]) => name.trim().length > 0)
+        .map(([label, name]) => ({ speakerLabel: label, displayName: name.trim() }));
+      await api.updateSpeakerMappings(token, meeting.id, mappingsToSave);
+      const map: Record<string, string> = {};
+      for (const m of mappingsToSave) {
+        map[m.speakerLabel] = m.displayName;
+      }
+      setSpeakerMappings(map);
+      setSpeakerSaveSuccess(true);
+      setTimeout(() => setSpeakerSaveSuccess(false), 2000);
+    } catch {
+      // silently fail
+    } finally {
+      setSpeakerSaving(false);
+    }
+  }
+
   // Sharing handlers
   async function handleShareAdd() {
     const email = shareEmail.trim();
@@ -262,7 +312,7 @@ export function MeetingDetailScreen({ meeting, token, onBack, currentUserId }: {
       setShareEmail("");
     } catch (err) {
       setShareError(
-        err instanceof Error ? err.message : "Greska pri deljenju",
+        err instanceof Error ? err.message : "Greška pri deljenju",
       );
     } finally {
       setSharingBusy(false);
@@ -439,7 +489,7 @@ export function MeetingDetailScreen({ meeting, token, onBack, currentUserId }: {
               >
                 {isSummarizing
                   ? "Analiziranje kompletnog transkripta"
-                  : "Transkripcija i analiza vaseg snimka"}
+                  : "Transkripcija i analiza vašeg snimka"}
               </Text>
             )}
             <Text
@@ -498,10 +548,10 @@ export function MeetingDetailScreen({ meeting, token, onBack, currentUserId }: {
               ]}
             >
               <Text style={[styles.errorTitle, { color: colors.error }]}>
-                Obrada neuspesna
+                Obrada neuspešna
               </Text>
               <Text style={[styles.errorBody, { color: colors.error }]}>
-                {statusError ?? "Doslo je do greske tokom obrade."}
+                {statusError ?? "Došlo je do greške tokom obrade."}
               </Text>
             </View>
 
@@ -619,8 +669,8 @@ export function MeetingDetailScreen({ meeting, token, onBack, currentUserId }: {
                 >
                   {meeting.participants.length}{" "}
                   {meeting.participants.length === 1
-                    ? "ucesnik"
-                    : "ucesnika"}
+                    ? "učesnik"
+                    : "učesnika"}
                 </Text>
               </>
             ) : null}
@@ -715,7 +765,7 @@ export function MeetingDetailScreen({ meeting, token, onBack, currentUserId }: {
                       setLoadError(
                         err instanceof Error
                           ? err.message
-                          : "Neuspesno ucitavanje rezultata",
+                          : "Neuspešno učitavanje rezultata",
                       );
                     }
                   })();
@@ -728,7 +778,7 @@ export function MeetingDetailScreen({ meeting, token, onBack, currentUserId }: {
                 <Text
                   style={[styles.retryBtnText, { color: colors.error }]}
                 >
-                  Pokusaj ponovo
+                  Pokušaj ponovo
                 </Text>
               </Pressable>
             </View>
@@ -744,7 +794,7 @@ export function MeetingDetailScreen({ meeting, token, onBack, currentUserId }: {
                   { color: colors.textMuted },
                 ]}
               >
-                Ucitavanje rezultata...
+                Učitavanje rezultata...
               </Text>
             </View>
           ) : null}
@@ -891,6 +941,104 @@ export function MeetingDetailScreen({ meeting, token, onBack, currentUserId }: {
                 </>
               ) : null}
 
+              {/* Speakers card */}
+              {artifact.transcript.length > 0 ? (() => {
+                const uniqueLabels = Array.from(
+                  new Set(artifact.transcript.map((seg) => seg.speakerLabel))
+                );
+                return uniqueLabels.length > 0 ? (
+                  <>
+                    <Card>
+                      <Text
+                        style={[styles.sectionTitle, { color: colors.text }]}
+                      >
+                        Sagovornici
+                      </Text>
+                      {uniqueLabels.map((label) => {
+                        const sColor = speakerColor(label);
+                        return (
+                          <View key={label} style={styles.speakerRow}>
+                            <View
+                              style={[
+                                styles.speakerDot,
+                                { backgroundColor: sColor },
+                              ]}
+                            />
+                            <Text
+                              style={[
+                                styles.speakerLabel,
+                                { color: sColor },
+                              ]}
+                              numberOfLines={1}
+                            >
+                              {label}
+                            </Text>
+                            <TextInput
+                              style={[
+                                styles.speakerInput,
+                                {
+                                  backgroundColor: colors.bgInput,
+                                  borderColor: colors.borderLight,
+                                  color: colors.text,
+                                },
+                              ]}
+                              placeholder="Unesite ime"
+                              placeholderTextColor={colors.textDim}
+                              value={speakerInputs[label] ?? ""}
+                              onChangeText={(v) =>
+                                setSpeakerInputs((prev) => ({
+                                  ...prev,
+                                  [label]: v,
+                                }))
+                              }
+                              maxLength={100}
+                              autoCapitalize="words"
+                              autoCorrect={false}
+                            />
+                          </View>
+                        );
+                      })}
+                      <View style={styles.speakerBtnRow}>
+                        {speakerSaveSuccess ? (
+                          <View
+                            style={[
+                              styles.speakerSuccessToast,
+                              { backgroundColor: colors.successBg },
+                            ]}
+                          >
+                            <Text
+                              style={[
+                                styles.speakerSuccessText,
+                                { color: colors.success },
+                              ]}
+                            >
+                              Imena sačuvana!
+                            </Text>
+                          </View>
+                        ) : (
+                          <Pressable
+                            onPress={handleSaveSpeakers}
+                            disabled={speakerSaving}
+                            style={[
+                              styles.speakerSaveBtn,
+                              {
+                                backgroundColor: colors.brand,
+                                opacity: speakerSaving ? 0.5 : 1,
+                              },
+                            ]}
+                          >
+                            <Text style={styles.speakerSaveBtnText}>
+                              {speakerSaving ? "..." : "Sacuvaj imena"}
+                            </Text>
+                          </Pressable>
+                        )}
+                      </View>
+                    </Card>
+                    <SectionDivider />
+                  </>
+                ) : null;
+              })() : null}
+
               {/* Transcript card */}
               {artifact.transcript.length > 0 ? (
                 <>
@@ -961,7 +1109,8 @@ export function MeetingDetailScreen({ meeting, token, onBack, currentUserId }: {
                                   { color: sColor },
                                 ]}
                               >
-                                {seg.speakerName ??
+                                {speakerMappings[seg.speakerLabel] ??
+                                  seg.speakerName ??
                                   seg.speakerLabel}
                               </Text>
                               {seg.confidence < 0.5 ? (
@@ -1041,7 +1190,7 @@ export function MeetingDetailScreen({ meeting, token, onBack, currentUserId }: {
                         { color: colors.textDim },
                       ]}
                     >
-                      Transkript jos nije dostupan.
+                      Transkript još nije dostupan.
                     </Text>
                   </View>
                   <SectionDivider />
@@ -1647,6 +1796,51 @@ const styles = StyleSheet.create({
     fontSize: 14,
     lineHeight: 21,
     paddingLeft: 18,
+  },
+
+  // Speaker mapping
+  speakerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingVertical: 6,
+  },
+  speakerLabel: {
+    fontSize: 13,
+    fontWeight: "700",
+    minWidth: 80,
+  },
+  speakerInput: {
+    flex: 1,
+    borderRadius: 10,
+    borderWidth: 1,
+    fontSize: 14,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
+  speakerBtnRow: {
+    alignItems: "center",
+    marginTop: 6,
+  },
+  speakerSaveBtn: {
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 12,
+    alignItems: "center",
+  },
+  speakerSaveBtnText: {
+    color: "#FFFFFF",
+    fontSize: 14,
+    fontWeight: "700",
+  },
+  speakerSuccessToast: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 10,
+  },
+  speakerSuccessText: {
+    fontSize: 13,
+    fontWeight: "700",
   },
 
   // Decisions

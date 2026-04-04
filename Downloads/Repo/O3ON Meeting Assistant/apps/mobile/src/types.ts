@@ -124,3 +124,8 @@ export type AudioFile = {
   contentType: string;
   downloadUrl: string;
 };
+
+export type SpeakerMapping = {
+  speakerLabel: string;
+  displayName: string;
+};

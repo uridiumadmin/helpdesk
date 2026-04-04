@@ -26,6 +26,7 @@ import { CreateUploadSessionDto } from "./dto/create-upload-session.dto";
 import { ProcessMeetingDto } from "./dto/process-meeting.dto";
 import { ShareMeetingDto } from "./dto/share-meeting.dto";
 import { UpdateMeetingDto } from "./dto/update-meeting.dto";
+import { UpdateSpeakersDto } from "./dto/update-speakers.dto";
 import { MeetingsService } from "./meetings.service";
 
 @Controller("meetings")
@@ -171,6 +172,25 @@ export class MeetingsController {
     @Body("items") items: ActionItem[]
   ) {
     return this.meetingsService.saveActionItems(auth, meetingId, items);
+  }
+
+  /* ---------- Speaker mappings ---------- */
+
+  @Get(":meetingId/speakers")
+  getSpeakerMappings(
+    @CurrentAuth() auth: AuthContext,
+    @Param("meetingId") meetingId: string
+  ) {
+    return this.meetingsService.getSpeakerMappings(auth, meetingId);
+  }
+
+  @Put(":meetingId/speakers")
+  updateSpeakerMappings(
+    @CurrentAuth() auth: AuthContext,
+    @Param("meetingId") meetingId: string,
+    @Body() dto: UpdateSpeakersDto
+  ) {
+    return this.meetingsService.updateSpeakerMappings(auth, meetingId, dto.mappings);
   }
 
   /* ---------- Delete ---------- */

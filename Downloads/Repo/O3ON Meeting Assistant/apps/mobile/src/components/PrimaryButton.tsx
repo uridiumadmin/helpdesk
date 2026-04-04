@@ -4,7 +4,7 @@ import { useTheme } from "../theme/ThemeContext";
 type Props = {
   label: string;
   onPress: () => void;
-  variant?: "primary" | "brand" | "secondary" | "ghost" | "danger";
+  variant?: "primary" | "brand" | "accent" | "secondary" | "ghost" | "danger";
   style?: ViewStyle;
   disabled?: boolean;
 };
@@ -21,9 +21,11 @@ export function PrimaryButton({
   function getBackgroundColor(): string {
     switch (variant) {
       case "primary":
-        return colors.accent;
+        return colors.brand;
       case "brand":
         return colors.brand;
+      case "accent":
+        return colors.accent;
       case "danger":
         return colors.error;
       case "secondary":
@@ -31,7 +33,7 @@ export function PrimaryButton({
       case "ghost":
         return "transparent";
       default:
-        return colors.accent;
+        return colors.brand;
     }
   }
 
@@ -47,8 +49,10 @@ export function PrimaryButton({
   function getLabelColor(): string {
     switch (variant) {
       case "primary":
-        return isDark ? "#101828" : "#FFFFFF";
+        return "#FFFFFF";
       case "brand":
+        return "#FFFFFF";
+      case "accent":
         return "#FFFFFF";
       case "danger":
         return "#FFFFFF";
@@ -57,7 +61,7 @@ export function PrimaryButton({
       case "ghost":
         return colors.textMuted;
       default:
-        return "#101828";
+        return "#FFFFFF";
     }
   }
 
@@ -73,6 +77,13 @@ export function PrimaryButton({
           borderColor: getBorderColor(),
           borderWidth: variant === "secondary" ? 1 : 0,
         },
+        !isDark && {
+          shadowColor: colors.shadow,
+          shadowOffset: { width: 0, height: 2 },
+          shadowOpacity: 1,
+          shadowRadius: 4,
+          elevation: 3,
+        },
         pressed && !disabled && styles.pressed,
         disabled && styles.disabled,
         style,
@@ -86,7 +97,7 @@ export function PrimaryButton({
 const styles = StyleSheet.create({
   base: {
     alignItems: "center",
-    borderRadius: 16,
+    borderRadius: 14,
     paddingHorizontal: 18,
     paddingVertical: 14,
   },

@@ -39,7 +39,7 @@ function userInitials(name: string): string {
 const ROLE_LABELS: Record<string, string> = {
   owner: "Vlasnik",
   admin: "Administrator",
-  member: "Clan",
+  member: "Član",
 };
 
 const THEME_MODES: ThemeMode[] = ["auto", "dark", "light"];
@@ -293,7 +293,7 @@ export function ProfileScreen({ token, user, onBack, onUpdated }: Props) {
       setTimeout(() => setSaveSuccess(false), 2000);
     } catch (err) {
       setSaveError(
-        err instanceof Error ? err.message : "Greska pri cuvanju",
+        err instanceof Error ? err.message : "Greška pri čuvanju",
       );
     } finally {
       setSaving(false);
@@ -413,13 +413,13 @@ export function ProfileScreen({ token, user, onBack, onUpdated }: Props) {
           ) : null}
           {saveSuccess ? (
             <Text style={[styles.successText, { color: colors.success }]}>
-              Promene su sacuvane
+              Promene su sačuvane
             </Text>
           ) : null}
 
           {/* Save button */}
           <PrimaryButton
-            label={saving ? "Cuvanje..." : "Sacuvaj"}
+            label={saving ? "Čuvanje..." : "Sačuvaj"}
             onPress={handleSave}
             disabled={saving || !hasChanges || !fullName.trim()}
             variant="brand"

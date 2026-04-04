@@ -4,6 +4,7 @@ import {
   Animated,
   Easing,
   FlatList,
+  Image,
   Pressable,
   RefreshControl,
   SafeAreaView,
@@ -42,7 +43,7 @@ type StatusFilter = "all" | "processing" | "ready";
 const STATUS_FILTERS: { key: StatusFilter; label: string }[] = [
   { key: "all", label: "Svi" },
   { key: "processing", label: "Obrada" },
-  { key: "ready", label: "Zavrseni" },
+  { key: "ready", label: "Završeni" },
 ];
 
 function formatDate(iso: string): string {
@@ -93,7 +94,7 @@ const STATUS_BADGE_MAP: Record<MeetingStatus, BadgeConfig> = {
   processing_chunks: { label: "Transkripcija...", bgKey: "warningBg", colorKey: "warning", pulse: true },
   summarizing: { label: "Rezime...", bgKey: "warningBg", colorKey: "warning", pulse: true },
   ready: {
-    label: "Zavrsen",
+    label: "Završen",
     bgKey: "successBg",
     colorKey: "success",
     borderColorKey: "success",
@@ -104,7 +105,7 @@ const STATUS_BADGE_MAP: Record<MeetingStatus, BadgeConfig> = {
     colorKey: "warning",
     borderColorKey: "warning",
   },
-  failed: { label: "Greska", bgKey: "errorBg", colorKey: "error" },
+  failed: { label: "Greška", bgKey: "errorBg", colorKey: "error" },
 };
 
 // Map status to card left-border color key
@@ -364,18 +365,18 @@ export function MeetingsScreen({
   function handleDeleteMeeting(meeting: Meeting) {
     Alert.alert(
       "Brisanje sastanka",
-      `Da li ste sigurni da zelite da obrisete ovaj sastanak?\n\n"${meeting.title}"`,
+      `Da li ste sigurni da želite da obrišete ovaj sastanak?\n\n"${meeting.title}"`,
       [
         { text: "Odustani", style: "cancel" },
         {
-          text: "Obrisi",
+          text: "Obriši",
           style: "destructive",
           onPress: async () => {
             try {
               await api.deleteMeeting(token, meeting.id);
               setMeetings((prev) => prev.filter((m) => m.id !== meeting.id));
             } catch {
-              Alert.alert("Greska", "Brisanje sastanka nije uspelo.");
+              Alert.alert("Greška", "Brisanje sastanka nije uspelo.");
             }
           },
         },
@@ -421,7 +422,7 @@ export function MeetingsScreen({
       }
     } catch (err) {
       setCreateError(
-        err instanceof Error ? err.message : "Greska pri kreiranju",
+        err instanceof Error ? err.message : "Greška pri kreiranju",
       );
     } finally {
       setCreating(false);
@@ -454,7 +455,11 @@ export function MeetingsScreen({
   function renderHeader() {
     return (
       <Animated.View style={[styles.header, { opacity: headerFade }]}>
-        <View>
+        <View style={{ flexDirection: "row", alignItems: "center" }}>
+          <Image
+            source={{ uri: "/icon-512.png" }}
+            style={{ width: 28, height: 28, borderRadius: 6, marginRight: 10 }}
+          />
           <Text style={[styles.headerTitle, { color: colors.text }]}>
             Sastanci
           </Text>
@@ -513,7 +518,7 @@ export function MeetingsScreen({
           </Text>
           <TextInput
             style={[styles.searchInput, { color: colors.text }]}
-            placeholder="Pretrazi sastanke..."
+            placeholder="Pretraži sastanke..."
             placeholderTextColor={colors.textDim}
             value={searchQuery}
             onChangeText={setSearchQuery}
@@ -611,7 +616,7 @@ export function MeetingsScreen({
               color: colors.text,
             },
           ]}
-          placeholder="Ucesnici (razdvojeni zarezom)"
+          placeholder="Učesnici (razdvojeni zarezom)"
           placeholderTextColor={colors.textDim}
           value={participants}
           onChangeText={setParticipants}
@@ -797,10 +802,10 @@ export function MeetingsScreen({
           </Text>
         </View>
         <Text style={[styles.emptyTitle, { color: colors.text }]}>
-          Jos nema sastanaka
+          Još nema sastanaka
         </Text>
         <Text style={[styles.emptySubtitle, { color: colors.textDim }]}>
-          Kreirajte prvi sastanak da zapocnete
+          Kreirajte prvi sastanak da započnete
         </Text>
         <PrimaryButton
           label="Novi sastanak"
