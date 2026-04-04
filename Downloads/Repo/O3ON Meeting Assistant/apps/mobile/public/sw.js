@@ -19,11 +19,13 @@ self.addEventListener("activate", (event) => {
 
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
+  // Only cache http/https requests (skip chrome-extension:// etc.)
+  const url = new URL(event.request.url);
+  if (url.protocol !== "https:" && url.protocol !== "http:") return;
   // Network-first: always try fresh, fall back to cache only on network error
   event.respondWith(
     fetch(event.request)
       .then((response) => {
-        // Cache successful GET responses for offline fallback
         if (response.ok) {
           const clone = response.clone();
           caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));

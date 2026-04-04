@@ -678,11 +678,17 @@ export class MeetingsService implements OnModuleInit {
         }
         const upload = meeting.uploads[0];
 
-        // Chunk progress info
-        const chunksTotal = await this.prisma.chunkJob.count({ where: { meetingId } });
-        const chunksCompleted = await this.prisma.chunkJob.count({
-          where: { meetingId, status: "transcribed" },
-        });
+        // Chunk progress info (defensive: chunkJob may not exist in older Prisma clients)
+        let chunksTotal = 0;
+        let chunksCompleted = 0;
+        try {
+          if (this.prisma.chunkJob) {
+            chunksTotal = await this.prisma.chunkJob.count({ where: { meetingId } });
+            chunksCompleted = await this.prisma.chunkJob.count({
+              where: { meetingId, status: "transcribed" },
+            });
+          }
+        } catch { /* chunkJob table may not exist yet */ }
 
         return {
           id: meeting.id,
@@ -1496,7 +1502,7 @@ export class MeetingsService implements OnModuleInit {
   /* ---------- Speaker mappings ---------- */
 
   async getSpeakerMappings(auth: AuthContext, meetingId: string) {
-    if (!this.usePrisma) {
+    if (!this.usePrisma || !this.prisma.speakerMapping) {
       return [];
     }
     try {
@@ -1515,7 +1521,7 @@ export class MeetingsService implements OnModuleInit {
     meetingId: string,
     mappings: Array<{ speakerLabel: string; displayName: string }>
   ) {
-    if (!this.usePrisma) {
+    if (!this.usePrisma || !this.prisma.speakerMapping) {
       return { updated: 0 };
     }
     try {
