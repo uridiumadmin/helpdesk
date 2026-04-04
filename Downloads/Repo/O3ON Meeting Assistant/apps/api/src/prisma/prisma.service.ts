@@ -8,6 +8,7 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
   async onModuleInit() {
     try {
       await this.$connect();
+      await this.$executeRawUnsafe("SET statement_timeout = '30s'");
       this.logger.log("Connected to database.");
     } catch (error) {
       this.logger.warn("Database connection failed; storage will use in-memory fallback.");

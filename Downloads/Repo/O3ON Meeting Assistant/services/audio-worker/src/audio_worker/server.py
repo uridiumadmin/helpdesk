@@ -11,7 +11,7 @@ import uuid
 
 from audio_worker.config import WorkerSettings
 from audio_worker.engine import MeetingPipeline
-from audio_worker.models import AudioSource, MeetingParticipant, ProcessingRequest, SpeakerEnrollment
+from audio_worker.models import AudioSource, MeetingParticipant, ProcessingRequest, SpeakerEnrollment, TranscriptSegment
 from audio_worker.provider import build_provider
 
 
@@ -172,23 +172,36 @@ def _handler_factory(settings: WorkerSettings) -> type[BaseHTTPRequestHandler]:
                 return
             self._send_json(HTTPStatus.NOT_FOUND, {"status": "not_found", "path": self.path})
 
-        def do_POST(self) -> None:  # noqa: N802
-            if self.path != "/process":
-                self._send_json(HTTPStatus.NOT_FOUND, {"status": "not_found", "path": self.path})
-                return
-
+        def _read_and_verify(self) -> bytes | None:
+            """Read request body and verify HMAC signature. Returns raw bytes or None on failure."""
             content_length = int(self.headers.get("Content-Length", "0"))
             if content_length <= 0 or content_length > 1024 * 1024:
                 self._send_json(
                     HTTPStatus.BAD_REQUEST, {"status": "error", "message": "Invalid request body."}
                 )
-                return
+                return None
             raw = self.rfile.read(content_length)
             if not _verify_worker_signature(settings, self.headers, raw):
                 self._send_json(
                     HTTPStatus.UNAUTHORIZED,
                     {"status": "error", "message": "Unauthorized worker request."},
                 )
+                return None
+            return raw
+
+        def do_POST(self) -> None:  # noqa: N802
+            if self.path == "/process":
+                self._handle_process()
+            elif self.path == "/transcribe-chunk":
+                self._handle_transcribe_chunk()
+            elif self.path == "/summarize":
+                self._handle_summarize()
+            else:
+                self._send_json(HTTPStatus.NOT_FOUND, {"status": "not_found", "path": self.path})
+
+        def _handle_process(self) -> None:
+            raw = self._read_and_verify()
+            if raw is None:
                 return
             try:
                 request_payload = json.loads(raw.decode("utf-8"))
@@ -206,6 +219,96 @@ def _handler_factory(settings: WorkerSettings) -> type[BaseHTTPRequestHandler]:
                         "status": "error",
                         "request_id": request_id,
                         "message": "Processing failed.",
+                    },
+                )
+
+        def _handle_transcribe_chunk(self) -> None:
+            raw = self._read_and_verify()
+            if raw is None:
+                return
+            try:
+                payload = json.loads(raw.decode("utf-8"))
+                # Resolve audio path
+                allowed_root = settings.resolved_allowed_source_root
+                audio_uri = _resolve_allowed_path(payload["audio_uri"], allowed_root)
+
+                participants = tuple(
+                    MeetingParticipant(
+                        participant_id=p["id"],
+                        display_name=p["name"],
+                        speaker_label=p.get("speaker_label"),
+                    )
+                    for p in payload.get("participants", [])
+                )
+
+                result = pipeline.transcribe_single_chunk(
+                    meeting_id=payload["meeting_id"],
+                    chunk_id=payload["chunk_id"],
+                    title=payload.get("title", ""),
+                    language=payload.get("language", "sr"),
+                    audio_uri=audio_uri,
+                    duration_seconds=float(payload.get("duration_seconds", 300)),
+                    participants=participants,
+                    prior_context=payload.get("prior_context", ""),
+                )
+                self._send_json(HTTPStatus.OK, result)
+            except Exception as exc:  # noqa: BLE001
+                request_id = uuid.uuid4().hex
+                print(f"[audio-worker] transcribe-chunk request_id={request_id} error={type(exc).__name__}: {exc}")
+                self._send_json(
+                    HTTPStatus.INTERNAL_SERVER_ERROR,
+                    {
+                        "status": "error",
+                        "request_id": request_id,
+                        "message": "Chunk transcription failed.",
+                    },
+                )
+
+        def _handle_summarize(self) -> None:
+            raw = self._read_and_verify()
+            if raw is None:
+                return
+            try:
+                payload = json.loads(raw.decode("utf-8"))
+                participants = tuple(
+                    MeetingParticipant(
+                        participant_id=p["id"],
+                        display_name=p["name"],
+                        speaker_label=p.get("speaker_label"),
+                    )
+                    for p in payload.get("participants", [])
+                )
+
+                segments = tuple(
+                    TranscriptSegment(
+                        chunk_id=s.get("chunk_id", ""),
+                        speaker_id=s.get("speaker", s.get("speaker_id", "speaker_unknown")),
+                        start_seconds=float(s.get("start", s.get("start_seconds", 0))),
+                        end_seconds=float(s.get("end", s.get("end_seconds", 0))),
+                        text=s.get("text", ""),
+                        confidence=float(s.get("confidence", 0.8)),
+                    )
+                    for s in payload.get("transcript_segments", [])
+                )
+
+                result = pipeline.summarize_transcript_only(
+                    meeting_id=payload["meeting_id"],
+                    title=payload.get("title", ""),
+                    language=payload.get("language", "sr"),
+                    transcript_segments=segments,
+                    participants=participants,
+                    notes=payload.get("notes", ""),
+                )
+                self._send_json(HTTPStatus.OK, result)
+            except Exception as exc:  # noqa: BLE001
+                request_id = uuid.uuid4().hex
+                print(f"[audio-worker] summarize request_id={request_id} error={type(exc).__name__}: {exc}")
+                self._send_json(
+                    HTTPStatus.INTERNAL_SERVER_ERROR,
+                    {
+                        "status": "error",
+                        "request_id": request_id,
+                        "message": "Summarization failed.",
                     },
                 )
 

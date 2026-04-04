@@ -3,7 +3,6 @@ import {
   ActivityIndicator,
   Animated,
   Easing,
-  Linking,
   Pressable,
   SafeAreaView,
   ScrollView,
@@ -13,10 +12,10 @@ import {
   View,
 } from "react-native";
 import { PrimaryButton } from "../components/PrimaryButton";
+import { AudioPlayerBar, AudioPlayerRef } from "../components/AudioPlayerBar";
 import { useTheme } from "../theme/ThemeContext";
 import { useProcessingStatus } from "../hooks/useProcessingStatus";
 import { api } from "../lib/api";
-import { appConfig } from "../config";
 import type { AudioFile, Meeting, MeetingArtifact, MeetingShare } from "../types";
 
 // ---------------------------------------------------------------------------
@@ -144,6 +143,7 @@ export function MeetingDetailScreen({ meeting, token, onBack, currentUserId }: {
 }) {
   const { colors, isDark } = useTheme();
   const {
+    data: statusData,
     isProcessing,
     isReady,
     isFailed,
@@ -152,6 +152,12 @@ export function MeetingDetailScreen({ meeting, token, onBack, currentUserId }: {
 
   const [artifact, setArtifact] = useState<MeetingArtifact | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+
+  // Partial transcript for progressive display
+  const [partialSegments, setPartialSegments] = useState<
+    Array<{ speaker: string; text: string; start: number; end: number; confidence: number }>
+  >([]);
+  const lastChunksCompleted = useRef(0);
 
   // Sharing state
   const isOwner = meeting.createdById === currentUserId;
@@ -162,7 +168,6 @@ export function MeetingDetailScreen({ meeting, token, onBack, currentUserId }: {
 
   // Audio state
   const [audioFiles, setAudioFiles] = useState<AudioFile[]>([]);
-  const [audioLoading, setAudioLoading] = useState(false);
 
   // Fade-in animation
   const fadeIn = useRef(new Animated.Value(0)).current;
@@ -199,6 +204,23 @@ export function MeetingDetailScreen({ meeting, token, onBack, currentUserId }: {
     };
   }, [isReady, token, meeting.id]);
 
+  // Fetch partial transcript when chunks complete during processing_chunks
+  useEffect(() => {
+    const completed = statusData?.chunksCompleted ?? 0;
+    if (
+      statusData?.status === "processing_chunks" &&
+      completed > 0 &&
+      completed !== lastChunksCompleted.current
+    ) {
+      lastChunksCompleted.current = completed;
+      api.getPartialTranscript(token, meeting.id).then((result) => {
+        setPartialSegments(result.segments);
+      }).catch(() => {
+        // silently fail
+      });
+    }
+  }, [statusData?.chunksCompleted, statusData?.status, token, meeting.id]);
+
   // Fetch shares (only for owner)
   const fetchShares = useCallback(async () => {
     if (!isOwner) return;
@@ -218,14 +240,11 @@ export function MeetingDetailScreen({ meeting, token, onBack, currentUserId }: {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      setAudioLoading(true);
       try {
         const files = await api.getAudioFiles(token, meeting.id);
         if (!cancelled) setAudioFiles(files);
       } catch {
         // silently fail
-      } finally {
-        if (!cancelled) setAudioLoading(false);
       }
     })();
     return () => { cancelled = true; };
@@ -263,96 +282,47 @@ export function MeetingDetailScreen({ meeting, token, onBack, currentUserId }: {
   const [exportBusy, setExportBusy] = useState(false);
   const [exportToast, setExportToast] = useState(false);
 
-  // Audio playback
-  const [playingId, setPlayingId] = useState<string | null>(null);
-  const [audioUrls, setAudioUrls] = useState<Record<string, string>>({});
-  const audioUrlsRef = useRef<Record<string, string>>({});
-  const audioRef = useRef<HTMLAudioElement | null>(null);
+  // Audio player ref
+  const playerRef = useRef<AudioPlayerRef>(null);
   const [currentTimeMs, setCurrentTimeMs] = useState<number>(-1);
 
-  // Cleanup Object URLs and audio on unmount to prevent memory leaks
-  useEffect(() => {
-    return () => {
-      if (audioRef.current) {
-        audioRef.current.pause();
-        audioRef.current = null;
-      }
-      for (const url of Object.values(audioUrlsRef.current)) {
-        try { URL.revokeObjectURL(url); } catch {}
-      }
-    };
+  // Auto-scroll state
+  const scrollViewRef = useRef<ScrollView>(null);
+  const segmentYPositions = useRef<Record<string, number>>({});
+  const lastAutoScrollSegId = useRef<string | null>(null);
+  const userScrolledAt = useRef<number>(0);
+  const AUTO_SCROLL_COOLDOWN = 5000;
+
+  const handlePlayerTimeUpdate = useCallback((timeMs: number) => {
+    setCurrentTimeMs(timeMs);
   }, []);
 
-  async function ensureAudioLoaded(file: AudioFile): Promise<string | null> {
-    let blobUrl = audioUrls[file.uploadId];
-    if (blobUrl) return blobUrl;
-    try {
-      const response = await fetch(
-        `${appConfig.apiBaseUrl}/v1/meetings/${meeting.id}/audio/${file.uploadId}/download`,
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
-      if (!response.ok) throw new Error("Download failed");
-      const blob = await response.blob();
-      blobUrl = URL.createObjectURL(blob);
-      audioUrlsRef.current[file.uploadId] = blobUrl;
-      setAudioUrls((prev) => ({ ...prev, [file.uploadId]: blobUrl! }));
-      return blobUrl;
-    } catch {
-      return null;
-    }
-  }
-
-  function createAudioElement(blobUrl: string) {
-    const audio = new window.Audio(blobUrl);
-    audio.onended = () => {
-      setPlayingId(null);
-      setCurrentTimeMs(-1);
-    };
-    audio.ontimeupdate = () => {
-      setCurrentTimeMs(Math.floor(audio.currentTime * 1000));
-    };
-    audioRef.current = audio;
-    return audio;
-  }
-
-  async function handleAudioPlay(file: AudioFile) {
-    if (playingId === file.uploadId) {
-      // Pause current
-      if (audioRef.current) {
-        audioRef.current.pause();
-      }
-      setPlayingId(null);
-      setCurrentTimeMs(-1);
-      return;
-    }
-
-    // Stop previous audio if different file
-    if (audioRef.current) {
-      audioRef.current.pause();
-      audioRef.current = null;
-    }
-
-    const blobUrl = await ensureAudioLoaded(file);
-    if (!blobUrl) return;
-
-    setPlayingId(file.uploadId);
-
-    if (typeof window !== "undefined") {
-      const audio = createAudioElement(blobUrl);
-      audio.play().catch(() => {
-        setPlayingId(null);
-        setCurrentTimeMs(-1);
-      });
-    }
-  }
-
   function handleTranscriptSeek(startMs: number) {
-    if (!audioRef.current) return;
-    audioRef.current.currentTime = startMs / 1000;
-    if (audioRef.current.paused) {
-      audioRef.current.play().catch(() => {});
-    }
+    playerRef.current?.seekTo(startMs);
   }
+
+  // Auto-scroll to active transcript segment
+  useEffect(() => {
+    if (!artifact || currentTimeMs < 0) return;
+    const now = Date.now();
+    if (now - userScrolledAt.current < AUTO_SCROLL_COOLDOWN) return;
+
+    const activeSeg = artifact.transcript.find(
+      (seg) => currentTimeMs >= seg.startMs && currentTimeMs < seg.endMs,
+    );
+    if (!activeSeg) return;
+    if (activeSeg.id === lastAutoScrollSegId.current) return;
+
+    lastAutoScrollSegId.current = activeSeg.id;
+    const y = segmentYPositions.current[activeSeg.id];
+    if (y !== undefined && scrollViewRef.current) {
+      scrollViewRef.current.scrollTo({ y: Math.max(0, y - 100), animated: true });
+    }
+  }, [currentTimeMs, artifact]);
+
+  const handleScrollBeginDrag = useCallback(() => {
+    userScrolledAt.current = Date.now();
+  }, []);
 
   // Export handler
   async function handleExport() {
@@ -382,12 +352,6 @@ export function MeetingDetailScreen({ meeting, token, onBack, currentUserId }: {
     } finally {
       setExportBusy(false);
     }
-  }
-
-  function formatFileSize(bytes: number): string {
-    if (bytes < 1024) return `${bytes} B`;
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   }
 
   // --------------------------------------------------
@@ -423,6 +387,12 @@ export function MeetingDetailScreen({ meeting, token, onBack, currentUserId }: {
   // --------------------------------------------------
 
   if (isProcessing) {
+    const chunksTotal = statusData?.chunksTotal ?? 0;
+    const chunksCompleted = statusData?.chunksCompleted ?? 0;
+    const isChunking = statusData?.status === "processing_chunks";
+    const isSummarizing = statusData?.status === "summarizing";
+    const progressRatio = chunksTotal > 0 ? chunksCompleted / chunksTotal : 0;
+
     return (
       <SafeAreaView style={[styles.safe, { backgroundColor: colors.bg }]}>
         <Animated.View
@@ -436,16 +406,42 @@ export function MeetingDetailScreen({ meeting, token, onBack, currentUserId }: {
             <Text
               style={[styles.processingTitle, { color: colors.brand }]}
             >
-              Obrada u toku...
+              {isSummarizing ? "Generisanje rezimea..." : "Obrada u toku..."}
             </Text>
-            <Text
-              style={[
-                styles.processingSubtitle,
-                { color: colors.textDim },
-              ]}
-            >
-              Transkripcija i analiza vaseg snimka
-            </Text>
+            {isChunking && chunksTotal > 0 ? (
+              <>
+                <Text
+                  style={[
+                    styles.processingSubtitle,
+                    { color: colors.textDim },
+                  ]}
+                >
+                  Transkripcija: {chunksCompleted}/{chunksTotal} delova
+                </Text>
+                <View style={[styles.progressBarBg, { backgroundColor: colors.separator }]}>
+                  <View
+                    style={[
+                      styles.progressBarFill,
+                      {
+                        backgroundColor: colors.brand,
+                        width: `${Math.round(progressRatio * 100)}%`,
+                      },
+                    ]}
+                  />
+                </View>
+              </>
+            ) : (
+              <Text
+                style={[
+                  styles.processingSubtitle,
+                  { color: colors.textDim },
+                ]}
+              >
+                {isSummarizing
+                  ? "Analiziranje kompletnog transkripta"
+                  : "Transkripcija i analiza vaseg snimka"}
+              </Text>
+            )}
             <Text
               style={[
                 styles.processingMeetingTitle,
@@ -454,6 +450,27 @@ export function MeetingDetailScreen({ meeting, token, onBack, currentUserId }: {
             >
               {meeting.title}
             </Text>
+
+            {/* Partial transcript preview */}
+            {partialSegments.length > 0 ? (
+              <View style={styles.partialTranscriptContainer}>
+                <Text style={[styles.partialTranscriptTitle, { color: colors.textDim }]}>
+                  Transkript u toku ({partialSegments.length} segmenata)
+                </Text>
+                <ScrollView style={styles.partialTranscriptScroll} nestedScrollEnabled>
+                  {partialSegments.slice(-10).map((seg, i) => (
+                    <View key={i} style={styles.partialSegmentRow}>
+                      <Text style={[styles.partialSpeaker, { color: speakerColor(seg.speaker) }]}>
+                        {seg.speaker}
+                      </Text>
+                      <Text style={[styles.partialText, { color: colors.textMuted }]}>
+                        {seg.text}
+                      </Text>
+                    </View>
+                  ))}
+                </ScrollView>
+              </View>
+            ) : null}
           </View>
         </Animated.View>
       </SafeAreaView>
@@ -543,8 +560,10 @@ export function MeetingDetailScreen({ meeting, token, onBack, currentUserId }: {
     <SafeAreaView style={[styles.safe, { backgroundColor: colors.bg }]}>
       <Animated.View style={{ opacity: fadeIn, flex: 1 }}>
         <ScrollView
+          ref={scrollViewRef}
           contentContainerStyle={styles.container}
           showsVerticalScrollIndicator={false}
+          onScrollBeginDrag={handleScrollBeginDrag}
         >
           {/* ---- Header section ---- */}
           <View style={styles.headerRow}>
@@ -893,13 +912,16 @@ export function MeetingDetailScreen({ meeting, token, onBack, currentUserId }: {
                         seg.speakerLabel,
                       );
                       const isActive =
-                        playingId !== null &&
+                        currentTimeMs >= 0 &&
                         currentTimeMs >= seg.startMs &&
                         currentTimeMs < seg.endMs;
                       return (
                         <Pressable
                           key={seg.id}
                           onPress={() => handleTranscriptSeek(seg.startMs)}
+                          onLayout={(e) => {
+                            segmentYPositions.current[seg.id] = e.nativeEvent.layout.y;
+                          }}
                           style={[
                             styles.transcriptRow,
                             {
@@ -1223,117 +1245,6 @@ export function MeetingDetailScreen({ meeting, token, onBack, currentUserId }: {
             </>
           ) : null}
 
-          {/* ---- Audio section ---- */}
-          {audioFiles.length > 0 ? (
-            <>
-              <SectionDivider />
-              <Card>
-                <Text
-                  style={[styles.sectionTitle, { color: colors.text }]}
-                >
-                  Audio snimci
-                </Text>
-                {audioFiles.map((file) => (
-                  <View
-                    key={file.uploadId}
-                    style={[
-                      styles.audioRow,
-                      { borderBottomColor: colors.separator },
-                    ]}
-                  >
-                    <View style={styles.audioInfo}>
-                      <Text
-                        style={[
-                          styles.audioFileName,
-                          { color: colors.text },
-                        ]}
-                        numberOfLines={1}
-                      >
-                        {file.fileName}
-                      </Text>
-                      <Text
-                        style={[
-                          styles.audioFileSize,
-                          { color: colors.textDim },
-                        ]}
-                      >
-                        {formatFileSize(file.fileSizeBytes)}
-                      </Text>
-                    </View>
-                    <Pressable
-                      onPress={() => handleAudioPlay(file)}
-                      style={[
-                        styles.audioBtn,
-                        {
-                          backgroundColor:
-                            playingId === file.uploadId
-                              ? colors.recordingBg
-                              : colors.brandBg,
-                        },
-                      ]}
-                    >
-                      <Text
-                        style={[
-                          styles.audioBtnText,
-                          {
-                            color:
-                              playingId === file.uploadId
-                                ? colors.recording
-                                : colors.brand,
-                          },
-                        ]}
-                      >
-                        {playingId === file.uploadId ? "Zaustavi" : "Pusti"}
-                      </Text>
-                    </Pressable>
-                  </View>
-                ))}
-              </Card>
-            </>
-          ) : audioLoading ? (
-            <>
-              <SectionDivider />
-              <View style={styles.loadingRow}>
-                <ActivityIndicator color={colors.brand} size="small" />
-                <Text
-                  style={[styles.loadingText, { color: colors.textMuted }]}
-                >
-                  Ucitavanje audio snimaka...
-                </Text>
-              </View>
-            </>
-          ) : (
-            <>
-              <SectionDivider />
-              <View
-                style={[
-                  styles.emptyStateRow,
-                  {
-                    backgroundColor: colors.bgCard,
-                    borderColor: colors.border,
-                  },
-                ]}
-              >
-                <Text
-                  style={[
-                    styles.emptyStateIcon,
-                    { color: colors.textDim },
-                  ]}
-                >
-                  i
-                </Text>
-                <Text
-                  style={[
-                    styles.emptyStateText,
-                    { color: colors.textDim },
-                  ]}
-                >
-                  Nema audio fajlova.
-                </Text>
-              </View>
-            </>
-          )}
-
           {/* ---- Sharing section (owner only) ---- */}
           {isOwner ? (
             <>
@@ -1474,6 +1385,17 @@ export function MeetingDetailScreen({ meeting, token, onBack, currentUserId }: {
             />
           ) : null}
         </ScrollView>
+
+        {/* ---- Audio player bar (sticky bottom) ---- */}
+        {audioFiles.length > 0 ? (
+          <AudioPlayerBar
+            ref={playerRef}
+            audioFiles={audioFiles}
+            token={token}
+            meetingId={meeting.id}
+            onTimeUpdate={handlePlayerTimeUpdate}
+          />
+        ) : null}
       </Animated.View>
     </SafeAreaView>
   );
@@ -1490,7 +1412,7 @@ const styles = StyleSheet.create({
   container: {
     padding: 20,
     gap: 14,
-    paddingBottom: 40,
+    paddingBottom: 120,
   },
 
   // Section divider
@@ -1829,6 +1751,51 @@ const styles = StyleSheet.create({
     textAlign: "center",
   },
 
+  // Progress bar
+  progressBarBg: {
+    height: 6,
+    borderRadius: 3,
+    width: "80%",
+    marginTop: 8,
+    overflow: "hidden",
+  },
+  progressBarFill: {
+    height: 6,
+    borderRadius: 3,
+  },
+
+  // Partial transcript preview
+  partialTranscriptContainer: {
+    marginTop: 20,
+    width: "100%",
+    maxHeight: 220,
+    paddingHorizontal: 16,
+  },
+  partialTranscriptTitle: {
+    fontSize: 13,
+    fontWeight: "700",
+    marginBottom: 8,
+    textAlign: "center",
+  },
+  partialTranscriptScroll: {
+    maxHeight: 180,
+  },
+  partialSegmentRow: {
+    flexDirection: "row",
+    gap: 8,
+    marginBottom: 4,
+  },
+  partialSpeaker: {
+    fontSize: 12,
+    fontWeight: "700",
+    minWidth: 80,
+  },
+  partialText: {
+    fontSize: 12,
+    flex: 1,
+    lineHeight: 17,
+  },
+
   // Error state
   errorCard: {
     borderRadius: 18,
@@ -1856,36 +1823,6 @@ const styles = StyleSheet.create({
   loadingText: {
     fontSize: 14,
     fontWeight: "500",
-  },
-
-  // Audio section
-  audioRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingVertical: 10,
-    borderBottomWidth: 1,
-    gap: 10,
-  },
-  audioInfo: {
-    flex: 1,
-    gap: 2,
-  },
-  audioFileName: {
-    fontSize: 14,
-    fontWeight: "600",
-  },
-  audioFileSize: {
-    fontSize: 12,
-  },
-  audioBtn: {
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 10,
-  },
-  audioBtnText: {
-    fontSize: 13,
-    fontWeight: "700",
   },
 
   // Sharing section

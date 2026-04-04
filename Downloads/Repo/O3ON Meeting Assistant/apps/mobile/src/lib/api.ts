@@ -193,6 +193,13 @@ export const api = {
   getArtifacts(token: string, meetingId: string) {
     return request<MeetingArtifact>(`/v1/meetings/${meetingId}/artifacts`, { token });
   },
+  getPartialTranscript(token: string, meetingId: string) {
+    return request<{
+      segments: Array<{ speaker: string; text: string; start: number; end: number; confidence: number }>;
+      chunksCompleted: number;
+      chunksTotal: number;
+    }>(`/v1/meetings/${meetingId}/partial-transcript`, { token });
+  },
   addActionItems(token: string, meetingId: string, items: ActionItem[]) {
     return request<void>(`/v1/meetings/${meetingId}/action-items`, {
       method: "PUT",

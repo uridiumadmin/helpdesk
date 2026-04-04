@@ -134,6 +134,11 @@ export class MeetingsController {
     return this.meetingsService.getMeetingStatus(auth, meetingId);
   }
 
+  @Get(":meetingId/partial-transcript")
+  getPartialTranscript(@CurrentAuth() auth: AuthContext, @Param("meetingId") meetingId: string) {
+    return this.meetingsService.getPartialTranscript(auth, meetingId);
+  }
+
   @Get(":meetingId/transcript")
   getTranscript(@CurrentAuth() auth: AuthContext, @Param("meetingId") meetingId: string) {
     return this.meetingsService.getTranscript(auth, meetingId);

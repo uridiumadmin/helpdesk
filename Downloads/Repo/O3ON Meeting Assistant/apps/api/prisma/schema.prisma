@@ -51,6 +51,7 @@ model Meeting {
   artifact        MeetingArtifact?
   processingJobs  ProcessingJob[]
   shares          MeetingShare[]
+  chunkJobs       ChunkJob[]
 
   @@index([orgId])
   @@map("meetings")
@@ -79,6 +80,7 @@ model Upload {
   fileName      String?   @map("file_name")
   fileSizeBytes BigInt?   @map("file_size_bytes")
   contentType   String?   @map("content_type")
+  chunkJobs     ChunkJob[]
 
   @@map("uploads")
 }
@@ -124,4 +126,20 @@ model MeetingShare {
 
   @@unique([meetingId, sharedWithEmail])
   @@map("meeting_shares")
+}
+
+model ChunkJob {
+  id              String    @id @default(uuid())
+  meetingId       String    @map("meeting_id")
+  meeting         Meeting   @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  uploadId        String    @map("upload_id")
+  upload          Upload    @relation(fields: [uploadId], references: [id], onDelete: Cascade)
+  chunkIndex      Int       @map("chunk_index")
+  status          String    @default("pending")
+  transcriptJson  Json?     @map("transcript_json")
+  errorMessage    String?   @map("error_message") @db.Text
+  startedAt       DateTime? @map("started_at")
+  completedAt     DateTime? @map("completed_at")
+  @@index([meetingId])
+  @@map("chunk_jobs")
 }

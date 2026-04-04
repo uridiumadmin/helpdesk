@@ -49,12 +49,17 @@ function hashPassword(password: string): string {
 }
 
 function verifyPassword(password: string, hash: string): boolean {
-  // Support migration from old HMAC-SHA256 hashes (hex, 64 chars, no $2 prefix)
-  if (hash && !hash.startsWith("$2")) {
-    // Legacy hash — cannot verify safely, force password reset
-    return false;
+  if (hash && hash.startsWith("$2")) {
+    return bcrypt.compareSync(password, hash);
   }
-  return bcrypt.compareSync(password, hash);
+  // Legacy HMAC-SHA256 hash — return null to signal "try legacy path"
+  return false;
+}
+
+function verifyLegacyHmac(password: string, storedHash: string, salt: string): boolean {
+  const { createHmac } = require("node:crypto");
+  const computed = createHmac("sha256", salt).update(password).digest("hex");
+  return timingSafeStringEqual(computed, storedHash);
 }
 
 function timingSafeStringEqual(a: string, b: string): boolean {
@@ -66,10 +71,16 @@ function timingSafeStringEqual(a: string, b: string): boolean {
 
 function generateStrongPassword(): string {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%&*()-_=+";
-  const bytes = randomBytes(32);
+  const maxUnbiased = 256 - (256 % chars.length);
   let password = "";
-  for (let i = 0; i < 24; i++) {
-    password += chars[bytes[i] % chars.length];
+  while (password.length < 24) {
+    const bytes = randomBytes(32);
+    for (const byte of bytes) {
+      if (byte < maxUnbiased) {
+        password += chars[byte % chars.length];
+        if (password.length >= 24) break;
+      }
+    }
   }
   return password;
 }
@@ -107,13 +118,27 @@ export class AuthController {
           dbAuthenticated = true;
           userRole = dbUser.role;
           userFullName = dbUser.fullName ?? userFullName;
+        } else if (dbUser.passwordHash && !dbUser.passwordHash.startsWith("$2")) {
+          // Legacy HMAC-SHA256 hash — try transparent migration
+          const legacySalt = this.configService.get<string>("LEGACY_AUTH_HMAC_SECRET") ?? "o3on-meeting-assistant-2026";
+          if (verifyLegacyHmac(dto.password, dbUser.passwordHash, legacySalt)) {
+            // Migrate to bcrypt transparently
+            const newHash = hashPassword(dto.password);
+            await this.prisma.user.update({ where: { id: dbUser.id }, data: { passwordHash: newHash } });
+            this.logger.log(`Migrated legacy password hash to bcrypt for user ${dbUser.id}`);
+            dbAuthenticated = true;
+            userRole = dbUser.role;
+            userFullName = dbUser.fullName ?? userFullName;
+          } else {
+            throw new UnauthorizedException("Pogrešna lozinka.");
+          }
         } else {
           throw new UnauthorizedException("Pogrešna lozinka.");
         }
       }
     } catch (error) {
       if (error instanceof UnauthorizedException) throw error;
-      this.logger.warn(`DB auth check failed: ${error}`);
+      this.logger.warn("DB auth check failed");
     }
 
     // Step 2: Fallback to USER_CREDENTIALS env var

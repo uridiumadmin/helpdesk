@@ -21,6 +21,8 @@ export type MeetingStatus =
   | "draft"
   | "recording"
   | "processing"
+  | "processing_chunks"
+  | "summarizing"
   | "ready"
   | "needs_review"
   | "failed";
@@ -90,6 +92,8 @@ export type MeetingStatusResponse = {
   uploadCompletedAt?: string;
   uploadFileName?: string;
   processingReady?: boolean;
+  chunksTotal?: number;
+  chunksCompleted?: number;
 };
 
 export type RecordingUploadResult = {

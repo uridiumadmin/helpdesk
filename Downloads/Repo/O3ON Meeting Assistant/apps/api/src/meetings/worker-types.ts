@@ -36,3 +36,35 @@ export interface WorkerProcessingResult {
   provider_name: string;
   warnings?: string[];
 }
+
+export interface ChunkTranscribePayload {
+  meeting_id: string;
+  chunk_id: string;
+  title: string;
+  language: string;
+  audio_uri: string;
+  duration_seconds: number;
+  participants: { id: string; name: string; speaker_label?: string }[];
+  prior_context: string;
+}
+
+export interface ChunkTranscribeResult {
+  chunk_id: string;
+  transcript_segments: WorkerTranscriptSegment[];
+  warnings?: string[];
+}
+
+export interface SummarizePayload {
+  meeting_id: string;
+  title: string;
+  language: string;
+  transcript_segments: WorkerTranscriptSegment[];
+  participants: { id: string; name: string; speaker_label?: string }[];
+  notes: string;
+}
+
+export interface SummarizeResult {
+  meeting_id: string;
+  artifact: WorkerArtifact;
+  warnings?: string[];
+}

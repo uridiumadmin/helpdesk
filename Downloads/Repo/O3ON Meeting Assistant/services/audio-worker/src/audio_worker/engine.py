@@ -6,13 +6,21 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from audio_worker.config import WorkerSettings
-from audio_worker.models import ProcessingRequest, ProcessingResult
+from audio_worker.models import (
+    AudioChunk,
+    AudioSource,
+    MeetingArtifact,
+    MeetingParticipant,
+    ProcessingRequest,
+    ProcessingResult,
+    TranscriptSegment,
+)
 from audio_worker.pipeline.chunk import chunk_audio
 from audio_worker.pipeline.diarize import diarize_chunks
 from audio_worker.pipeline.normalize import normalize_audio_source
 from audio_worker.pipeline.summarize import summarize_transcript
-from audio_worker.pipeline.transcribe import transcribe_chunks
-from audio_worker.provider import DiarizationRequest, MeetingAIProvider
+from audio_worker.pipeline.transcribe import transcribe_chunks, _transcribe_with_retry
+from audio_worker.provider import DiarizationRequest, MeetingAIProvider, SummaryRequest, TranscriptionRequest
 
 logger = logging.getLogger(__name__)
 
@@ -97,6 +105,114 @@ class MeetingPipeline:
             )
         finally:
             self._cleanup_temp_files(_cleanup_paths, request.meeting_id)
+
+    def transcribe_single_chunk(
+        self,
+        meeting_id: str,
+        chunk_id: str,
+        title: str,
+        language: str,
+        audio_uri: str,
+        duration_seconds: float,
+        participants: tuple[MeetingParticipant, ...],
+        prior_context: str = "",
+    ) -> dict:
+        """Normalize and transcribe a single uploaded audio chunk (no re-chunking)."""
+        self.settings.validate()
+
+        source = AudioSource(
+            source_id=chunk_id,
+            uri=audio_uri,
+            duration_seconds=duration_seconds,
+            language=language,
+        )
+        normalized = normalize_audio_source(source, self.settings)
+        _cleanup_paths: list[Path] = []
+        try:
+            normalized_path = Path(normalized.normalized_uri)
+            _cleanup_paths.append(normalized_path)
+
+            # Treat the entire file as a single chunk — no sub-chunking
+            chunk = AudioChunk(
+                chunk_id=chunk_id,
+                index=0,
+                start_seconds=0.0,
+                end_seconds=normalized.duration_seconds or duration_seconds,
+                overlap_seconds=0.0,
+                source_id=chunk_id,
+                chunk_uri=normalized.normalized_uri,
+            )
+
+            request = TranscriptionRequest(
+                meeting_id=meeting_id,
+                chunk=chunk,
+                language=language,
+                participants=participants,
+                prior_context=prior_context,
+            )
+
+            transcript_segments = _transcribe_with_retry(self.provider, request)
+
+            # If the model doesn't do diarization, try GPT fallback
+            uses_diarize_model = "diarize" in self.settings.transcription_model
+            if not uses_diarize_model and participants:
+                try:
+                    diarization_request = DiarizationRequest(
+                        meeting_id=meeting_id,
+                        language=language,
+                        title=title,
+                        transcript_segments=transcript_segments,
+                        participants=participants,
+                    )
+                    transcript_segments = self.provider.diarize_transcript(diarization_request)
+                except (NotImplementedError, Exception) as exc:
+                    print(f"[transcribe_single_chunk] GPT diarization fallback skipped: {exc}")
+
+            warnings = list(normalized.warnings)
+            segments_list = [
+                {
+                    "speaker": seg.speaker_id,
+                    "text": seg.text,
+                    "start": seg.start_seconds,
+                    "end": seg.end_seconds,
+                    "confidence": seg.confidence,
+                }
+                for seg in transcript_segments
+            ]
+            return {
+                "chunk_id": chunk_id,
+                "transcript_segments": segments_list,
+                "warnings": warnings,
+            }
+        finally:
+            self._cleanup_temp_files(_cleanup_paths, meeting_id)
+
+    def summarize_transcript_only(
+        self,
+        meeting_id: str,
+        title: str,
+        language: str,
+        transcript_segments: tuple[TranscriptSegment, ...],
+        participants: tuple[MeetingParticipant, ...],
+        notes: str = "",
+    ) -> dict:
+        """Run summarization on pre-merged transcript segments (no audio processing)."""
+        self.settings.validate()
+
+        artifact: MeetingArtifact = summarize_transcript(
+            provider=self.provider,
+            meeting_id=meeting_id,
+            language=language,
+            title=title,
+            transcript_segments=transcript_segments,
+            participants=participants,
+            notes=notes,
+        )
+        return {
+            "meeting_id": meeting_id,
+            "artifact": artifact.to_dict(),
+            "warnings": [],
+        }
 
     @staticmethod
     def _cleanup_temp_files(paths: list[Path], meeting_id: str) -> None:

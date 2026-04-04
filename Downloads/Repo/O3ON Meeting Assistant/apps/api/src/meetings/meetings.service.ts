@@ -8,7 +8,7 @@ import { CreateUploadSessionDto } from "./dto/create-upload-session.dto";
 import { UpdateMeetingDto } from "./dto/update-meeting.dto";
 import { UploadStorageService } from "./upload-storage.service";
 import { WorkerClient } from "./worker-client";
-import { WorkerProcessingResult } from "./worker-types";
+import { WorkerProcessingResult, WorkerTranscriptSegment } from "./worker-types";
 import { PrismaService } from "../prisma/prisma.service";
 import { S3Service } from "../storage/s3.service";
 
@@ -470,7 +470,7 @@ export class MeetingsService implements OnModuleInit {
           data: { completedAt: new Date() },
         });
 
-        const updateData: Record<string, unknown> = { status: "processing" };
+        const updateData: Record<string, unknown> = { status: "processing_chunks" };
         if (durationSeconds && durationSeconds > 0) {
           updateData.durationMinutes = Math.max(1, Math.ceil(durationSeconds / 60));
         }
@@ -481,7 +481,23 @@ export class MeetingsService implements OnModuleInit {
 
         let processingJobId = uuidv7();
         if (upload.filePath && this.workerClient.autoProcess) {
-          processingJobId = await this.runWorkerPipelinePrisma(auth, meetingId, durationSeconds);
+          // Per-chunk progressive processing
+          const existingChunkCount = await this.prisma.chunkJob.count({ where: { meetingId } });
+          const chunkJob = await this.prisma.chunkJob.create({
+            data: {
+              id: uuidv7(),
+              meetingId,
+              uploadId,
+              chunkIndex: existingChunkCount,
+              status: "pending",
+            },
+          });
+          processingJobId = chunkJob.id;
+
+          // Fire-and-forget: transcribe this chunk in background
+          this.transcribeChunkBackground(chunkJob.id, meetingId, uploadId, durationSeconds).catch((err) => {
+            this.logger.error(`Background chunk transcription failed for meeting ${meetingId}: ${err}`);
+          });
         }
 
         return {
@@ -661,6 +677,13 @@ export class MeetingsService implements OnModuleInit {
           throw new NotFoundException(`Meeting ${meetingId} was not found.`);
         }
         const upload = meeting.uploads[0];
+
+        // Chunk progress info
+        const chunksTotal = await this.prisma.chunkJob.count({ where: { meetingId } });
+        const chunksCompleted = await this.prisma.chunkJob.count({
+          where: { meetingId, status: "transcribed" },
+        });
+
         return {
           id: meeting.id,
           status: meeting.status,
@@ -668,6 +691,8 @@ export class MeetingsService implements OnModuleInit {
           uploadCompletedAt: upload?.completedAt?.toISOString(),
           uploadFileName: upload?.fileName,
           processingReady: Boolean(upload?.filePath),
+          chunksTotal,
+          chunksCompleted,
         };
       } catch (error) {
         if (error instanceof NotFoundException) throw error;
@@ -683,6 +708,8 @@ export class MeetingsService implements OnModuleInit {
       uploadCompletedAt: meeting.upload?.completedAt,
       uploadFileName: meeting.upload?.fileName,
       processingReady: Boolean(meeting.upload?.filePath),
+      chunksTotal: 0,
+      chunksCompleted: 0,
     };
   }
 
@@ -1087,6 +1114,328 @@ export class MeetingsService implements OnModuleInit {
       contentType: meeting.upload.contentType ?? "audio/mp4",
       fileName: meeting.upload.fileName ?? "recording.m4a",
     };
+  }
+
+  /* ---------- Per-chunk progressive processing ---------- */
+
+  private async transcribeChunkBackground(
+    chunkJobId: string,
+    meetingId: string,
+    uploadId: string,
+    durationSeconds?: number
+  ): Promise<void> {
+    try {
+      // Mark chunk as transcribing
+      await this.prisma.chunkJob.update({
+        where: { id: chunkJobId },
+        data: { status: "transcribing", startedAt: new Date() },
+      });
+
+      // Load upload, meeting, participants
+      const upload = await this.prisma.upload.findUnique({ where: { id: uploadId } });
+      if (!upload?.filePath) {
+        throw new Error(`Upload ${uploadId} has no file path.`);
+      }
+
+      const meeting = await this.prisma.meeting.findUnique({
+        where: { id: meetingId },
+        include: { participants: true },
+      });
+      if (!meeting) {
+        throw new Error(`Meeting ${meetingId} not found.`);
+      }
+
+      const chunkJob = await this.prisma.chunkJob.findUnique({ where: { id: chunkJobId } });
+      if (!chunkJob) {
+        throw new Error(`ChunkJob ${chunkJobId} not found.`);
+      }
+
+      // Load prior context from previous chunk
+      let priorContext = "";
+      if (chunkJob.chunkIndex > 0) {
+        const prevChunk = await this.prisma.chunkJob.findFirst({
+          where: { meetingId, chunkIndex: chunkJob.chunkIndex - 1, status: "transcribed" },
+        });
+        if (prevChunk?.transcriptJson) {
+          const prevSegments = prevChunk.transcriptJson as Array<{ text?: string }>;
+          const allText = prevSegments.map((s) => s.text ?? "").join(" ");
+          priorContext = allText.slice(-200);
+        }
+      }
+
+      const participants = meeting.participants.map((p) => ({
+        id: p.id,
+        name: p.name,
+        speaker_label: p.speakerLabel ?? undefined,
+      }));
+
+      const result = await this.workerClient.transcribeChunk({
+        meeting_id: meetingId,
+        chunk_id: chunkJobId,
+        title: meeting.title,
+        language: "sr",
+        audio_uri: upload.filePath,
+        duration_seconds: durationSeconds ?? meeting.durationMinutes * 60,
+        participants,
+        prior_context: priorContext,
+      });
+
+      // Store transcript in ChunkJob
+      await this.prisma.chunkJob.update({
+        where: { id: chunkJobId },
+        data: {
+          status: "transcribed",
+          transcriptJson: JSON.parse(JSON.stringify(result.transcript_segments)),
+          completedAt: new Date(),
+        },
+      });
+
+      // Check if all chunks are done
+      const totalChunks = await this.prisma.chunkJob.count({ where: { meetingId } });
+      const completedChunks = await this.prisma.chunkJob.count({
+        where: { meetingId, status: "transcribed" },
+      });
+
+      if (completedChunks >= totalChunks) {
+        // All chunks transcribed — run summarization
+        this.runSummarizationBackground(meetingId).catch((err) => {
+          this.logger.error(`Background summarization failed for meeting ${meetingId}: ${err}`);
+        });
+      }
+      // Otherwise meeting stays in "processing_chunks"
+
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      this.logger.error(`Chunk transcription error for ${chunkJobId}: ${errorMessage}`);
+      try {
+        await this.prisma.chunkJob.update({
+          where: { id: chunkJobId },
+          data: {
+            status: "failed",
+            errorMessage,
+            completedAt: new Date(),
+          },
+        });
+      } catch (dbErr) {
+        this.logger.error(`Failed to record chunk error in DB: ${dbErr}`);
+      }
+    }
+  }
+
+  private async runSummarizationBackground(meetingId: string): Promise<void> {
+    try {
+      // Set meeting status to "summarizing"
+      await this.prisma.meeting.update({
+        where: { id: meetingId },
+        data: { status: "summarizing" },
+      });
+
+      // Load all completed chunk jobs ordered by chunkIndex
+      const chunkJobs = await this.prisma.chunkJob.findMany({
+        where: { meetingId, status: "transcribed" },
+        orderBy: { chunkIndex: "asc" },
+      });
+
+      // Merge transcript segments with time offset computation
+      const mergedSegments: WorkerTranscriptSegment[] = [];
+      let cumulativeOffset = 0;
+      for (const cj of chunkJobs) {
+        const segments = (cj.transcriptJson ?? []) as Array<{
+          chunk_id?: string;
+          speaker_id?: string;
+          speaker?: string;
+          start_seconds?: number;
+          start?: number;
+          end_seconds?: number;
+          end?: number;
+          text?: string;
+          confidence?: number;
+        }>;
+
+        let chunkMaxEnd = 0;
+        for (const seg of segments) {
+          const startSec = seg.start_seconds ?? seg.start ?? 0;
+          const endSec = seg.end_seconds ?? seg.end ?? 0;
+          const adjustedStart = startSec + cumulativeOffset;
+          const adjustedEnd = endSec + cumulativeOffset;
+          mergedSegments.push({
+            chunk_id: seg.chunk_id ?? `${cj.id}-seg`,
+            speaker_id: seg.speaker_id ?? seg.speaker ?? "speaker_unknown",
+            start_seconds: adjustedStart,
+            end_seconds: adjustedEnd,
+            text: seg.text ?? "",
+            confidence: seg.confidence ?? 0.8,
+          });
+          if (endSec > chunkMaxEnd) chunkMaxEnd = endSec;
+        }
+        cumulativeOffset += chunkMaxEnd;
+      }
+
+      // Load meeting and participants for summarization
+      const meeting = await this.prisma.meeting.findUnique({
+        where: { id: meetingId },
+        include: { participants: true },
+      });
+      if (!meeting) {
+        throw new Error(`Meeting ${meetingId} not found.`);
+      }
+
+      const participants = meeting.participants.map((p) => ({
+        id: p.id,
+        name: p.name,
+        speaker_label: p.speakerLabel ?? undefined,
+      }));
+
+      const result = await this.workerClient.summarizeMeeting({
+        meeting_id: meetingId,
+        title: meeting.title,
+        language: "sr",
+        transcript_segments: mergedSegments,
+        participants,
+        notes: "",
+      });
+
+      // Build transcript for artifact storage (same format as applyWorkerResultPrisma)
+      const transcript = mergedSegments.map((seg) => {
+        const participant = meeting.participants.find(
+          (candidate) =>
+            candidate.speakerLabel === seg.speaker_id || candidate.id === seg.speaker_id
+        );
+        return {
+          id: seg.chunk_id,
+          speakerLabel: seg.speaker_id,
+          speakerName: participant?.name,
+          startMs: Math.round(seg.start_seconds * 1000),
+          endMs: Math.round(seg.end_seconds * 1000),
+          text: seg.text,
+          confidence: seg.confidence,
+        };
+      });
+
+      const actionItems = (result.artifact.action_items ?? []).map((item, index) => ({
+        id: `${meetingId}-action-${index + 1}`,
+        title: item.task,
+        owner: item.owner ?? undefined,
+        dueDate: item.due_date ?? undefined,
+        confidence: item.confidence,
+      }));
+
+      const minutes = (result.artifact.meeting_minutes ?? "")
+        .split(/\n+/)
+        .map((line: string) => line.trim())
+        .filter(Boolean);
+
+      const needsReview = (result.warnings ?? []).length > 0;
+
+      await this.prisma.meetingArtifact.upsert({
+        where: { meetingId },
+        create: {
+          id: uuidv7(),
+          meetingId,
+          summaryText: result.artifact.summary,
+          transcriptJson: JSON.parse(JSON.stringify(transcript)),
+          minutesJson: JSON.parse(JSON.stringify(minutes)),
+          decisionsJson: JSON.parse(JSON.stringify(result.artifact.decisions ?? [])),
+          risksJson: JSON.parse(JSON.stringify(result.artifact.risks ?? [])),
+          openQuestionsJson: JSON.parse(JSON.stringify(result.artifact.next_steps ?? [])),
+          actionItemsJson: JSON.parse(JSON.stringify(actionItems)),
+          needsReview,
+        },
+        update: {
+          summaryText: result.artifact.summary,
+          transcriptJson: JSON.parse(JSON.stringify(transcript)),
+          minutesJson: JSON.parse(JSON.stringify(minutes)),
+          decisionsJson: JSON.parse(JSON.stringify(result.artifact.decisions ?? [])),
+          risksJson: JSON.parse(JSON.stringify(result.artifact.risks ?? [])),
+          openQuestionsJson: JSON.parse(JSON.stringify(result.artifact.next_steps ?? [])),
+          actionItemsJson: JSON.parse(JSON.stringify(actionItems)),
+          needsReview,
+        },
+      });
+
+      await this.prisma.meeting.update({
+        where: { id: meetingId },
+        data: {
+          status: needsReview ? "needs_review" : "ready",
+          summary: result.artifact.summary,
+        },
+      });
+
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      this.logger.error(`Summarization error for meeting ${meetingId}: ${errorMessage}`);
+      try {
+        await this.prisma.meeting.update({
+          where: { id: meetingId },
+          data: { status: "failed" },
+        });
+      } catch (dbErr) {
+        this.logger.error(`Failed to record summarization error in DB: ${dbErr}`);
+      }
+    }
+  }
+
+  async getPartialTranscript(auth: AuthContext, meetingId: string) {
+    if (this.usePrisma) {
+      try {
+        await this.getPrismaMeetingForOrg(auth.orgId, meetingId, auth.email);
+
+        const totalChunks = await this.prisma.chunkJob.count({ where: { meetingId } });
+        const chunkJobs = await this.prisma.chunkJob.findMany({
+          where: { meetingId, status: "transcribed" },
+          orderBy: { chunkIndex: "asc" },
+        });
+
+        // Merge transcript segments with time offsets
+        const segments: Array<{
+          speaker: string;
+          text: string;
+          start: number;
+          end: number;
+          confidence: number;
+        }> = [];
+
+        let cumulativeOffset = 0;
+        for (const cj of chunkJobs) {
+          const chunkSegments = (cj.transcriptJson ?? []) as Array<{
+            speaker?: string;
+            speaker_id?: string;
+            text?: string;
+            start?: number;
+            start_seconds?: number;
+            end?: number;
+            end_seconds?: number;
+            confidence?: number;
+          }>;
+          let chunkMaxEnd = 0;
+          for (const seg of chunkSegments) {
+            const startSec = seg.start ?? seg.start_seconds ?? 0;
+            const endSec = seg.end ?? seg.end_seconds ?? 0;
+            segments.push({
+              speaker: seg.speaker ?? seg.speaker_id ?? "speaker_unknown",
+              text: seg.text ?? "",
+              start: startSec + cumulativeOffset,
+              end: endSec + cumulativeOffset,
+              confidence: seg.confidence ?? 0.8,
+            });
+            if (endSec > chunkMaxEnd) chunkMaxEnd = endSec;
+          }
+          cumulativeOffset += chunkMaxEnd;
+        }
+
+        return {
+          segments,
+          chunksCompleted: chunkJobs.length,
+          chunksTotal: totalChunks,
+        };
+      } catch (error) {
+        if (error instanceof NotFoundException) throw error;
+        this.rethrowOrUnavailable("getPartialTranscript", error);
+      }
+    }
+
+    // In-memory fallback: no chunk jobs in memory mode
+    return { segments: [], chunksCompleted: 0, chunksTotal: 0 };
   }
 
   /* ---------- In-memory helpers (Map fallback) ---------- */

@@ -90,6 +90,8 @@ const STATUS_BADGE_MAP: Record<MeetingStatus, BadgeConfig> = {
     pulse: true,
   },
   processing: { label: "Obrada...", bgKey: "warningBg", colorKey: "warning" },
+  processing_chunks: { label: "Transkripcija...", bgKey: "warningBg", colorKey: "warning", pulse: true },
+  summarizing: { label: "Rezime...", bgKey: "warningBg", colorKey: "warning", pulse: true },
   ready: {
     label: "Zavrsen",
     bgKey: "successBg",
@@ -115,6 +117,8 @@ function statusBorderColorKey(status: MeetingStatus): string {
     case "recording":
       return "recording";
     case "processing":
+    case "processing_chunks":
+    case "summarizing":
       return "accent";
     case "failed":
       return "error";

@@ -77,7 +77,7 @@ export function useProcessingStatus(
   const status = data?.status;
   return {
     data,
-    isProcessing: status === "processing" || status === "recording",
+    isProcessing: status === "processing" || status === "recording" || status === "processing_chunks" || status === "summarizing",
     isReady: status === "ready" || status === "needs_review",
     isFailed: status === "failed",
     error,

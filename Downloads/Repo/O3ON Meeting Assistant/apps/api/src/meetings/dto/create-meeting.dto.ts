@@ -1,4 +1,4 @@
-import { IsArray, IsDateString, IsInt, IsOptional, IsString, MaxLength, Min } from "class-validator";
+import { ArrayMaxSize, IsArray, IsDateString, IsInt, IsOptional, IsString, MaxLength, Min } from "class-validator";
 
 export class CreateMeetingDto {
   @IsString()
@@ -20,6 +20,8 @@ export class CreateMeetingDto {
 
   @IsOptional()
   @IsArray()
+  @ArrayMaxSize(50)
   @IsString({ each: true })
+  @MaxLength(100, { each: true })
   participantNames?: string[];
 }
