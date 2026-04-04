@@ -459,7 +459,7 @@ export const AudioPlayerBar = forwardRef<AudioPlayerRef, AudioPlayerBarProps>(
             accessibilityLabel="Premotaj 15s unazad"
           >
             <Text style={[playerStyles.skipText, { color: colors.accent }]}>
-              {"<< 15"}
+              {"\u23EA 15"}
             </Text>
           </Pressable>
 
@@ -484,7 +484,7 @@ export const AudioPlayerBar = forwardRef<AudioPlayerRef, AudioPlayerBarProps>(
             accessibilityLabel="Premotaj 15s unapred"
           >
             <Text style={[playerStyles.skipText, { color: colors.accent }]}>
-              {"15 >>"}
+              {"15 \u23E9"}
             </Text>
           </Pressable>
 
@@ -565,11 +565,13 @@ const playerStyles = StyleSheet.create({
     marginBottom: 10,
   },
   skipBtn: {
-    paddingHorizontal: 6,
-    paddingVertical: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    backgroundColor: "rgba(128,128,128,0.1)",
+    borderRadius: 12,
   },
   skipText: {
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: "700",
   },
   playBtn: {
@@ -585,7 +587,7 @@ const playerStyles = StyleSheet.create({
     fontWeight: "800",
   },
   timeText: {
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: "500",
     marginLeft: "auto",
   },
@@ -593,6 +595,8 @@ const playerStyles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 5,
     borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "rgba(128,128,128,0.2)",
   },
   rateText: {
     fontSize: 13,

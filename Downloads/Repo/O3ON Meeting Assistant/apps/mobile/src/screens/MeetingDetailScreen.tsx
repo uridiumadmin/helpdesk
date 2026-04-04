@@ -453,7 +453,7 @@ export function MeetingDetailScreen({ meeting, token, onBack, currentUserId }: {
         style={styles.backBtn}
       >
         <Text style={[styles.backArrow, { color: colors.textMuted }]}>
-          {"<"}
+          {"\u2190"}
         </Text>
         <Text style={[styles.backLabel, { color: colors.textMuted }]}>
           Sastanci
@@ -1604,12 +1604,12 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     alignSelf: "flex-start",
-    gap: 6,
+    gap: 8,
     paddingVertical: 8,
     paddingRight: 12,
   },
   backArrow: {
-    fontSize: 18,
+    fontSize: 20,
     fontWeight: "600",
   },
   backLabel: {
