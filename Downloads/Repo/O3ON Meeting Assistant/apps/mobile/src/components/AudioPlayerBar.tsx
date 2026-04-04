@@ -47,6 +47,50 @@ function formatTimeMmSs(ms: number): string {
   return `${String(min).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
 }
 
+/**
+ * Reliably fetch the duration of a blob URL.
+ *
+ * VBR MP3 (and some AAC) files report `Infinity` on `onloadedmetadata`
+ * because the browser can't derive duration from the header alone.
+ * Seeking to an absurdly large time forces the browser to scan the whole
+ * blob and fires `ondurationchange` with the real finite value.
+ */
+function getAudioDuration(blobUrl: string): Promise<number> {
+  return new Promise((resolve) => {
+    const audio = new window.Audio(blobUrl);
+    audio.preload = "metadata";
+
+    function cleanup() {
+      audio.onloadedmetadata = null;
+      audio.ondurationchange = null;
+      audio.onerror = null;
+    }
+
+    audio.onerror = () => {
+      cleanup();
+      resolve(0);
+    };
+
+    audio.ondurationchange = () => {
+      if (isFinite(audio.duration) && audio.duration > 0) {
+        cleanup();
+        resolve(audio.duration * 1000);
+      }
+    };
+
+    audio.onloadedmetadata = () => {
+      if (isFinite(audio.duration) && audio.duration > 0) {
+        cleanup();
+        resolve(audio.duration * 1000);
+      } else {
+        // VBR / no-header: seek to end to force full scan
+        audio.currentTime = 1e101;
+        // ondurationchange will fire with the real value
+      }
+    };
+  });
+}
+
 // ---------------------------------------------------------------------------
 // AudioPlayerBar
 // ---------------------------------------------------------------------------
@@ -145,33 +189,31 @@ export const AudioPlayerBar = forwardRef<AudioPlayerRef, AudioPlayerBarProps>(
           return;
         }
 
+        // Ensure duration is known before attaching to the player
+        if (!fileDurations.current[file.uploadId]) {
+          const durMs = await getAudioDuration(blobUrl);
+          if (durMs > 0) {
+            fileDurations.current[file.uploadId] = durMs;
+            recomputeOffsets();
+          }
+        }
+
         // Clean up previous audio element's event handlers
         if (audioRef.current) {
           audioRef.current.onended = null;
           audioRef.current.ontimeupdate = null;
-          audioRef.current.onloadedmetadata = null;
+          audioRef.current.ondurationchange = null;
           audioRef.current.pause();
         }
 
         const audio = new window.Audio(blobUrl);
         audioRef.current = audio;
 
-        audio.onloadedmetadata = () => {
-          const durMs = audio.duration * 1000;
-          fileDurations.current[file.uploadId] = durMs;
-          recomputeOffsets();
-          setIsLoading(false);
-
-          if (seekToSec !== undefined) {
-            audio.currentTime = seekToSec;
-          }
-
-          audio.playbackRate = playbackRateRef.current;
-
-          if (startPlaying) {
-            audio.play().catch(() => {
-              setIsPlaying(false);
-            });
+        // Catch late duration updates (e.g. browser refines estimate mid-play)
+        audio.ondurationchange = () => {
+          if (isFinite(audio.duration) && audio.duration > 0) {
+            fileDurations.current[file.uploadId] = audio.duration * 1000;
+            recomputeOffsets();
           }
         };
 
@@ -191,7 +233,6 @@ export const AudioPlayerBar = forwardRef<AudioPlayerRef, AudioPlayerBarProps>(
           } else {
             // Finished all files
             setIsPlaying(false);
-            // Set to end of total
             const totalEnd = fileOffsets.current.reduce((sum, _, i) => {
               return sum + (fileDurations.current[audioFiles[i]?.uploadId] ?? 0);
             }, 0);
@@ -200,18 +241,12 @@ export const AudioPlayerBar = forwardRef<AudioPlayerRef, AudioPlayerBarProps>(
           }
         };
 
-        // If the file was already cached and metadata loaded instantly,
-        // onloadedmetadata may not fire — handle via readyState check
-        if (audio.readyState >= 1) {
-          const durMs = audio.duration * 1000;
-          fileDurations.current[file.uploadId] = durMs;
-          recomputeOffsets();
-          setIsLoading(false);
-          if (seekToSec !== undefined) audio.currentTime = seekToSec;
-          audio.playbackRate = playbackRateRef.current;
-          if (startPlaying) {
-            audio.play().catch(() => setIsPlaying(false));
-          }
+        if (seekToSec !== undefined) audio.currentTime = seekToSec;
+        audio.playbackRate = playbackRateRef.current;
+        setIsLoading(false);
+
+        if (startPlaying) {
+          audio.play().catch(() => setIsPlaying(false));
         }
       },
       [audioFiles, fetchBlobUrl, recomputeOffsets, onTimeUpdate],
@@ -227,17 +262,15 @@ export const AudioPlayerBar = forwardRef<AudioPlayerRef, AudioPlayerBarProps>(
     // ---- Preload all file durations ----
     useEffect(() => {
       if (typeof window === "undefined") return;
-      audioFiles.forEach(async (file, idx) => {
+      audioFiles.forEach(async (file) => {
         if (fileDurations.current[file.uploadId]) return;
         const blobUrl = await fetchBlobUrl(file);
         if (!blobUrl) return;
-        // Create a temporary audio element to get duration
-        const tempAudio = new window.Audio(blobUrl);
-        tempAudio.onloadedmetadata = () => {
-          fileDurations.current[file.uploadId] = tempAudio.duration * 1000;
+        const durMs = await getAudioDuration(blobUrl);
+        if (durMs > 0) {
+          fileDurations.current[file.uploadId] = durMs;
           recomputeOffsets();
-          tempAudio.onloadedmetadata = null;
-        };
+        }
       });
     }, [audioFiles, fetchBlobUrl, recomputeOffsets]);
 
