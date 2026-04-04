@@ -562,7 +562,7 @@ const styles = StyleSheet.create({
   input: {
     borderRadius: 12,
     borderWidth: 1,
-    fontSize: 15,
+    fontSize: 16,
     paddingHorizontal: 14,
     paddingVertical: 12,
   },
