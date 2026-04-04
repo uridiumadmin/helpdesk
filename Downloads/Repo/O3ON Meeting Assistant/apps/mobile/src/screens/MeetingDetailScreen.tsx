@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Animated,
@@ -74,6 +74,28 @@ function confidenceColor(value: number, success: string, warning: string, error:
 function SectionDivider() {
   const { colors } = useTheme();
   return <View style={[styles.sectionDivider, { backgroundColor: colors.separator }]} />;
+}
+
+function Card({ children, accentBorder }: { children: React.ReactNode; accentBorder?: string }) {
+  const { colors, isDark } = useTheme();
+  return (
+    <View
+      style={[
+        styles.card,
+        { backgroundColor: colors.bgCard, borderColor: colors.border },
+        accentBorder ? { borderLeftColor: accentBorder, borderLeftWidth: 3 } : null,
+        !isDark && {
+          shadowColor: colors.shadow,
+          shadowOffset: { width: 0, height: 2 },
+          shadowOpacity: 1,
+          shadowRadius: 8,
+          elevation: 2,
+        },
+      ]}
+    >
+      {children}
+    </View>
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -574,41 +596,7 @@ export function MeetingDetailScreen({ meeting, token, onBack, currentUserId }: {
     );
   }
 
-  // --------------------------------------------------
-  // Card wrapper
-  // --------------------------------------------------
-
-  function Card({
-    children,
-    accentBorder,
-  }: {
-    children: React.ReactNode;
-    accentBorder?: string;
-  }) {
-    return (
-      <View
-        style={[
-          styles.card,
-          {
-            backgroundColor: colors.bgCard,
-            borderColor: colors.border,
-          },
-          accentBorder
-            ? { borderLeftColor: accentBorder, borderLeftWidth: 3 }
-            : null,
-          !isDark && {
-            shadowColor: colors.shadow,
-            shadowOffset: { width: 0, height: 2 },
-            shadowOpacity: 1,
-            shadowRadius: 8,
-            elevation: 2,
-          },
-        ]}
-      >
-        {children}
-      </View>
-    );
-  }
+  // Card is defined at module level (below) to prevent focus loss on re-render
 
   // --------------------------------------------------
   // Results state (or initial loading)
